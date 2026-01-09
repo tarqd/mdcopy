@@ -1,0 +1,23 @@
+# cargo-release configuration
+# https://github.com/crate-ci/cargo-release
+
+# Don't publish to crates.io (remove this line if you want to publish)
+publish = false
+
+# Push to remote after release
+push = true
+
+# Create git tag
+tag = true
+
+# Tag prefix (v0.1.0)
+tag-prefix = "v"
+
+# Commit message format
+tag-message = "Release {{version}}"
+
+# Pre-release replacements (update version references in other files)
+# [[pre-release-replacements]]
+# file = "README.md"
+# search = "mdcopy = \".*\""
+# replace = "mdcopy = \"{{version}}\""
