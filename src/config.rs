@@ -190,18 +190,7 @@ pub struct CliArgs {
     pub highlight: CliHighlightArgs,
 }
 
-/// Detect system dark mode (macOS)
-#[cfg(target_os = "macos")]
-pub fn detect_dark_mode() -> bool {
-    use std::process::Command;
-    Command::new("defaults")
-        .args(["read", "-g", "AppleInterfaceStyle"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("Dark"))
-        .unwrap_or(false)
-}
-
-#[cfg(not(target_os = "macos"))]
+/// Returns true for dark mode (default behavior)
 pub fn detect_dark_mode() -> bool {
     true
 }
