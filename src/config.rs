@@ -4,23 +4,12 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Theme mode selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ThemeMode {
-    #[default]
-    Auto,
-    Dark,
-    Light,
-}
-
 /// Highlight configuration from file
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct FileHighlightConfig {
     pub enable: Option<bool>,
     pub theme: Option<String>,
-    pub theme_dark: Option<String>,
-    pub theme_light: Option<String>,
     pub themes_dir: Option<String>,
     pub syntaxes_dir: Option<String>,
     #[serde(default)]
@@ -45,9 +34,6 @@ pub struct FileConfig {
 pub struct HighlightConfig {
     pub enable: bool,
     pub theme: String,
-    pub theme_dark: String,
-    pub theme_light: String,
-    pub theme_mode: ThemeMode,
     pub themes_dir: Option<PathBuf>,
     pub syntaxes_dir: Option<PathBuf>,
     pub languages: HashMap<String, String>,
@@ -57,10 +43,7 @@ impl Default for HighlightConfig {
     fn default() -> Self {
         Self {
             enable: true,
-            theme: String::new(),
-            theme_dark: "base16-ocean.dark".to_string(),
-            theme_light: "base16-ocean.light".to_string(),
-            theme_mode: ThemeMode::Auto,
+            theme: "base16-ocean.dark".to_string(),
             themes_dir: None,
             syntaxes_dir: None,
             languages: default_language_mappings(),
@@ -173,9 +156,6 @@ fn parse_embed_mode(s: &str) -> Option<EmbedMode> {
 pub struct CliHighlightArgs {
     pub enable: Option<bool>,
     pub theme: Option<String>,
-    pub theme_dark: Option<String>,
-    pub theme_light: Option<String>,
-    pub theme_mode: Option<ThemeMode>,
     pub themes_dir: Option<PathBuf>,
     pub syntaxes_dir: Option<PathBuf>,
 }
@@ -190,29 +170,10 @@ pub struct CliArgs {
     pub highlight: CliHighlightArgs,
 }
 
-/// Returns true for dark mode (default behavior)
-pub fn detect_dark_mode() -> bool {
-    true
-}
-
 impl HighlightConfig {
-    /// Get the effective theme based on theme mode and system appearance
+    /// Get the theme name
     pub fn effective_theme(&self) -> &str {
-        if !self.theme.is_empty() {
-            return &self.theme;
-        }
-
-        let use_dark = match self.theme_mode {
-            ThemeMode::Dark => true,
-            ThemeMode::Light => false,
-            ThemeMode::Auto => detect_dark_mode(),
-        };
-
-        if use_dark {
-            &self.theme_dark
-        } else {
-            &self.theme_light
-        }
+        &self.theme
     }
 
     /// Get the themes directory (custom or default)
@@ -266,12 +227,6 @@ impl Config {
         if let Some(v) = file_config.highlight.theme {
             config.highlight.theme = v;
         }
-        if let Some(v) = file_config.highlight.theme_dark {
-            config.highlight.theme_dark = v;
-        }
-        if let Some(v) = file_config.highlight.theme_light {
-            config.highlight.theme_light = v;
-        }
         if let Some(v) = file_config.highlight.themes_dir {
             config.highlight.themes_dir = Some(PathBuf::from(v));
         }
@@ -306,12 +261,6 @@ impl Config {
         if let Some(v) = env_var("highlight_theme") {
             config.highlight.theme = v;
         }
-        if let Some(v) = env_var("highlight_theme_dark") {
-            config.highlight.theme_dark = v;
-        }
-        if let Some(v) = env_var("highlight_theme_light") {
-            config.highlight.theme_light = v;
-        }
         if let Some(v) = env_var("highlight_themes_dir") {
             config.highlight.themes_dir = Some(PathBuf::from(v));
         }
@@ -343,15 +292,6 @@ impl Config {
         if let Some(v) = cli.highlight.theme {
             config.highlight.theme = v;
         }
-        if let Some(v) = cli.highlight.theme_dark {
-            config.highlight.theme_dark = v;
-        }
-        if let Some(v) = cli.highlight.theme_light {
-            config.highlight.theme_light = v;
-        }
-        if let Some(v) = cli.highlight.theme_mode {
-            config.highlight.theme_mode = v;
-        }
         if let Some(v) = cli.highlight.themes_dir {
             config.highlight.themes_dir = Some(v);
         }
@@ -379,9 +319,6 @@ mod tests {
             highlight: CliHighlightArgs {
                 enable: None,
                 theme: None,
-                theme_dark: None,
-                theme_light: None,
-                theme_mode: None,
                 themes_dir: None,
                 syntaxes_dir: None,
             },
@@ -397,9 +334,7 @@ mod tests {
         assert_eq!(config.embed, crate::EmbedMode::Local);
         assert!(!config.strict);
         assert!(config.highlight.enable);
-        assert_eq!(config.highlight.theme_dark, "base16-ocean.dark");
-        assert_eq!(config.highlight.theme_light, "base16-ocean.light");
-        assert_eq!(config.highlight.theme_mode, ThemeMode::Auto);
+        assert_eq!(config.highlight.theme, "base16-ocean.dark");
     }
 
     #[test]
@@ -443,39 +378,12 @@ mod tests {
     }
 
     #[test]
-    fn test_theme_mode_default() {
-        assert_eq!(ThemeMode::default(), ThemeMode::Auto);
-    }
-
-    #[test]
-    fn test_highlight_config_effective_theme_explicit() {
+    fn test_highlight_config_effective_theme() {
         let config = HighlightConfig {
             theme: "custom-theme".to_string(),
             ..Default::default()
         };
         assert_eq!(config.effective_theme(), "custom-theme");
-    }
-
-    #[test]
-    fn test_highlight_config_effective_theme_dark_mode() {
-        let config = HighlightConfig {
-            theme_mode: ThemeMode::Dark,
-            theme_dark: "dark-theme".to_string(),
-            theme_light: "light-theme".to_string(),
-            ..Default::default()
-        };
-        assert_eq!(config.effective_theme(), "dark-theme");
-    }
-
-    #[test]
-    fn test_highlight_config_effective_theme_light_mode() {
-        let config = HighlightConfig {
-            theme_mode: ThemeMode::Light,
-            theme_dark: "dark-theme".to_string(),
-            theme_light: "light-theme".to_string(),
-            ..Default::default()
-        };
-        assert_eq!(config.effective_theme(), "light-theme");
     }
 
     #[test]
@@ -488,7 +396,7 @@ mod tests {
         writeln!(file, "embed = \"all\"").unwrap();
         writeln!(file, "[highlight]").unwrap();
         writeln!(file, "enable = false").unwrap();
-        writeln!(file, "theme_dark = \"my-dark\"").unwrap();
+        writeln!(file, "theme = \"my-theme\"").unwrap();
 
         let config = load_config_file(&config_path);
         assert!(config.is_some());
@@ -496,7 +404,7 @@ mod tests {
         assert_eq!(config.strict, Some(true));
         assert_eq!(config.embed, Some("all".to_string()));
         assert_eq!(config.highlight.enable, Some(false));
-        assert_eq!(config.highlight.theme_dark, Some("my-dark".to_string()));
+        assert_eq!(config.highlight.theme, Some("my-theme".to_string()));
     }
 
     #[test]
@@ -561,9 +469,6 @@ mod tests {
             highlight: CliHighlightArgs {
                 enable: Some(false),
                 theme: Some("custom".to_string()),
-                theme_dark: Some("dark".to_string()),
-                theme_light: Some("light".to_string()),
-                theme_mode: Some(ThemeMode::Dark),
                 themes_dir: Some(PathBuf::from("/themes")),
                 syntaxes_dir: Some(PathBuf::from("/syntaxes")),
             },
@@ -578,9 +483,6 @@ mod tests {
         assert!(config.strict);
         assert!(!config.highlight.enable);
         assert_eq!(config.highlight.theme, "custom");
-        assert_eq!(config.highlight.theme_dark, "dark");
-        assert_eq!(config.highlight.theme_light, "light");
-        assert_eq!(config.highlight.theme_mode, ThemeMode::Dark);
         assert_eq!(config.highlight.themes_dir, Some(PathBuf::from("/themes")));
         assert_eq!(
             config.highlight.syntaxes_dir,
@@ -597,14 +499,14 @@ mod tests {
         writeln!(file, "input = \"from-file.md\"").unwrap();
         writeln!(file, "strict = true").unwrap();
         writeln!(file, "[highlight]").unwrap();
-        writeln!(file, "theme_dark = \"file-dark\"").unwrap();
+        writeln!(file, "theme = \"file-theme\"").unwrap();
 
         let cli = empty_cli_args();
         let config = Config::build(cli, Some(config_path));
 
         assert_eq!(config.input, PathBuf::from("from-file.md"));
         assert!(config.strict);
-        assert_eq!(config.highlight.theme_dark, "file-dark");
+        assert_eq!(config.highlight.theme, "file-theme");
     }
 
     #[test]

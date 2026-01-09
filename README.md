@@ -59,11 +59,7 @@ mdcopy -i document.md -o -
 | Option | Description |
 |--------|-------------|
 | `--highlight` | Enable/disable syntax highlighting (default: enabled) |
-| `--highlight-theme <NAME>` | Use a specific theme (overrides dark/light themes) |
-| `--highlight-theme-dark <NAME>` | Theme for dark mode (default: `base16-ocean.dark`) |
-| `--highlight-theme-light <NAME>` | Theme for light mode (default: `base16-ocean.light`) |
-| `--highlight-dark` | Force dark theme |
-| `--highlight-light` | Force light theme |
+| `--highlight-theme <NAME>` | Theme to use (default: `base16-ocean.dark`) |
 | `--highlight-themes-dir <DIR>` | Custom themes directory |
 | `--highlight-syntaxes-dir <DIR>` | Custom syntaxes directory |
 | `--list-themes` | List available themes and exit |
@@ -82,9 +78,10 @@ Supports GitHub Flavored Markdown (GFM) including:
 
 ### Syntax Highlighting
 
-Code blocks are syntax highlighted using the [syntect](https://github.com/trishume/syntect) library. Dark theme is used by default; use `--highlight-light` to switch.
+Code blocks are syntax highlighted using the [syntect](https://github.com/trishume/syntect) library with `base16-ocean.dark` as the default theme.
 
 - Supports 50+ programming languages out of the box
+- Use `--list-themes` to see available themes
 - Add custom themes (`.tmTheme` files) to `~/.config/mdcopy/themes/`
 - Add custom syntax definitions to `~/.config/mdcopy/syntaxes/`
 - Configure language aliases (e.g., map `jsx` to `JavaScript`)
@@ -124,8 +121,7 @@ strict = false
 
 [highlight]
 enable = true
-theme_dark = "base16-ocean.dark"
-theme_light = "base16-ocean.light"
+theme = "base16-ocean.dark"
 
 # Custom language mappings
 [highlight.languages]
@@ -144,8 +140,6 @@ All settings can be configured via environment variables with the `MDCOPY_` pref
 - `MDCOPY_STRICT` - Strict mode (true/false)
 - `MDCOPY_HIGHLIGHT` - Enable highlighting (true/false)
 - `MDCOPY_HIGHLIGHT_THEME` - Theme name
-- `MDCOPY_HIGHLIGHT_THEME_DARK` - Dark theme name
-- `MDCOPY_HIGHLIGHT_THEME_LIGHT` - Light theme name
 - `MDCOPY_HIGHLIGHT_THEMES_DIR` - Custom themes directory
 - `MDCOPY_HIGHLIGHT_SYNTAXES_DIR` - Custom syntaxes directory
 
@@ -166,9 +160,6 @@ mdcopy -i doc.md --root /path/to/images
 
 # Use a specific syntax highlighting theme
 mdcopy -i doc.md --highlight-theme "Solarized (dark)"
-
-# Force light theme for syntax highlighting
-mdcopy -i doc.md --highlight-light
 
 # List all available themes
 mdcopy --list-themes

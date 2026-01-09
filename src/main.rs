@@ -6,7 +6,7 @@ mod to_rtf;
 
 use clap::{Parser, ValueEnum};
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
-use config::{CliArgs, CliHighlightArgs, Config, ThemeMode, default_config_dir};
+use config::{CliArgs, CliHighlightArgs, Config, default_config_dir};
 use log::{LevelFilter, debug, info};
 use markdown::{Constructs, Options, ParseOptions};
 use std::fs;
@@ -52,25 +52,9 @@ struct Args {
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     highlight: Option<bool>,
 
-    /// Syntax highlighting theme (overrides --highlight-dark/--highlight-light)
+    /// Syntax highlighting theme
     #[arg(long = "highlight-theme")]
     highlight_theme: Option<String>,
-
-    /// Theme to use in dark mode
-    #[arg(long = "highlight-theme-dark")]
-    highlight_theme_dark: Option<String>,
-
-    /// Theme to use in light mode
-    #[arg(long = "highlight-theme-light")]
-    highlight_theme_light: Option<String>,
-
-    /// Use dark theme for syntax highlighting
-    #[arg(long = "highlight-dark", conflicts_with = "highlight_light")]
-    highlight_dark: bool,
-
-    /// Use light theme for syntax highlighting
-    #[arg(long = "highlight-light", conflicts_with = "highlight_dark")]
-    highlight_light: bool,
 
     /// Custom themes directory
     #[arg(long = "highlight-themes-dir")]
@@ -159,14 +143,6 @@ fn main() -> io::Result<()> {
     }
 
     // Build configuration from CLI args, env vars, and config file
-    let theme_mode = if args.highlight_dark {
-        Some(ThemeMode::Dark)
-    } else if args.highlight_light {
-        Some(ThemeMode::Light)
-    } else {
-        None
-    };
-
     let cli_args = CliArgs {
         input: args.input,
         output: args.output.clone(),
@@ -176,9 +152,6 @@ fn main() -> io::Result<()> {
         highlight: CliHighlightArgs {
             enable: args.highlight,
             theme: args.highlight_theme,
-            theme_dark: args.highlight_theme_dark,
-            theme_light: args.highlight_theme_light,
-            theme_mode,
             themes_dir: args.highlight_themes_dir,
             syntaxes_dir: args.highlight_syntaxes_dir,
         },
@@ -191,8 +164,7 @@ fn main() -> io::Result<()> {
     debug!("Embed mode: {:?}", cfg.embed);
     debug!("Strict mode: {}", cfg.strict);
     debug!("Syntax highlighting: {}", cfg.highlight.enable);
-    debug!("Theme mode: {:?}", cfg.highlight.theme_mode);
-    debug!("Effective theme: {}", effective_theme);
+    debug!("Theme: {}", effective_theme);
 
     let highlight_ctx = if !cfg.highlight.enable {
         None

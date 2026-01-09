@@ -252,45 +252,13 @@ fn test_quiet_mode() {
 }
 
 #[test]
-fn test_dark_mode_theme() {
-    let (stdout, _, success) = run_with_stdin(
-        &["-o", "-", "--highlight-dark"],
-        "```rust\nfn main() {}\n```",
-    );
-    assert!(success);
-    // Should use the dark theme (base16-ocean.dark by default)
-    assert!(stdout.contains("<pre"));
-}
-
-#[test]
-fn test_light_mode_theme() {
-    let (stdout, _, success) = run_with_stdin(
-        &["-o", "-", "--highlight-light"],
-        "```rust\nfn main() {}\n```",
-    );
-    assert!(success);
-    // Should use the light theme
-    assert!(stdout.contains("<pre"));
-}
-
-#[test]
-fn test_custom_theme_dark() {
+fn test_custom_theme_from_config() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        "[highlight]\ntheme_dark = \"Solarized (dark)\"\n",
-    )
-    .unwrap();
+    std::fs::write(&config_path, "[highlight]\ntheme = \"Solarized (dark)\"\n").unwrap();
 
     let (stdout, _, success) = run_with_stdin(
-        &[
-            "-o",
-            "-",
-            "-c",
-            config_path.to_str().unwrap(),
-            "--highlight-dark",
-        ],
+        &["-o", "-", "-c", config_path.to_str().unwrap()],
         "```rust\nfn main() {}\n```",
     );
     assert!(success);
