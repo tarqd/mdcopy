@@ -210,3 +210,247 @@ pub fn load_image_with_fallback(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_is_remote_url() {
+        assert!(is_remote_url("http://example.com/image.png"));
+        assert!(is_remote_url("https://example.com/image.png"));
+        assert!(is_remote_url("//example.com/image.png"));
+        assert!(!is_remote_url("image.png"));
+        assert!(!is_remote_url("./images/photo.jpg"));
+        assert!(!is_remote_url("/absolute/path/image.png"));
+    }
+
+    #[test]
+    fn test_is_data_url() {
+        assert!(is_data_url("data:image/png;base64,iVBORw0KGgo="));
+        assert!(is_data_url("data:text/plain,hello"));
+        assert!(!is_data_url("http://example.com"));
+        assert!(!is_data_url("image.png"));
+    }
+
+    #[test]
+    fn test_guess_mime_type_from_data_png() {
+        let png_header = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        assert_eq!(guess_mime_type_from_data(&png_header), "image/png");
+    }
+
+    #[test]
+    fn test_guess_mime_type_from_data_jpeg() {
+        let jpeg_header = [0xFF, 0xD8, 0xFF, 0xE0];
+        assert_eq!(guess_mime_type_from_data(&jpeg_header), "image/jpeg");
+    }
+
+    #[test]
+    fn test_guess_mime_type_from_data_gif() {
+        assert_eq!(guess_mime_type_from_data(b"GIF87a..."), "image/gif");
+        assert_eq!(guess_mime_type_from_data(b"GIF89a..."), "image/gif");
+    }
+
+    #[test]
+    fn test_guess_mime_type_from_data_webp() {
+        // WEBP format: RIFF....WEBP (12+ bytes with WEBP at offset 8)
+        let webp_header = b"RIFF\x00\x00\x00\x00WEBPmore";
+        assert_eq!(guess_mime_type_from_data(webp_header), "image/webp");
+    }
+
+    #[test]
+    fn test_guess_mime_type_from_data_bmp() {
+        assert_eq!(guess_mime_type_from_data(b"BM..."), "image/bmp");
+    }
+
+    #[test]
+    fn test_guess_mime_type_from_data_unknown() {
+        assert_eq!(
+            guess_mime_type_from_data(b"unknown data"),
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn test_guess_mime_type_from_path_by_extension() {
+        let unknown_data = b"unknown";
+        assert_eq!(
+            guess_mime_type_from_path(Path::new("image.png"), unknown_data),
+            "image/png"
+        );
+        assert_eq!(
+            guess_mime_type_from_path(Path::new("photo.jpg"), unknown_data),
+            "image/jpeg"
+        );
+        assert_eq!(
+            guess_mime_type_from_path(Path::new("photo.jpeg"), unknown_data),
+            "image/jpeg"
+        );
+        assert_eq!(
+            guess_mime_type_from_path(Path::new("anim.gif"), unknown_data),
+            "image/gif"
+        );
+        assert_eq!(
+            guess_mime_type_from_path(Path::new("icon.svg"), unknown_data),
+            "image/svg+xml"
+        );
+    }
+
+    #[test]
+    fn test_guess_mime_type_prefers_magic_bytes() {
+        // PNG magic bytes but .jpg extension - should detect as PNG
+        let png_header = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        assert_eq!(
+            guess_mime_type_from_path(Path::new("wrong.jpg"), &png_header),
+            "image/png"
+        );
+    }
+
+    #[test]
+    fn test_embedded_image_to_data_url() {
+        let img = EmbeddedImage {
+            data: vec![1, 2, 3, 4],
+            mime_type: "image/png".to_string(),
+        };
+        let data_url = img.to_data_url();
+        assert!(data_url.starts_with("data:image/png;base64,"));
+        assert_eq!(data_url, "data:image/png;base64,AQIDBA==");
+    }
+
+    #[test]
+    fn test_embedded_image_to_rtf_hex() {
+        let img = EmbeddedImage {
+            data: vec![0x00, 0xFF, 0xAB, 0x12],
+            mime_type: "image/png".to_string(),
+        };
+        assert_eq!(img.to_rtf_hex(), "00ffab12");
+    }
+
+    #[test]
+    fn test_embedded_image_rtf_format() {
+        let png = EmbeddedImage {
+            data: vec![],
+            mime_type: "image/png".to_string(),
+        };
+        assert_eq!(png.rtf_format(), Some("\\pngblip"));
+
+        let jpeg = EmbeddedImage {
+            data: vec![],
+            mime_type: "image/jpeg".to_string(),
+        };
+        assert_eq!(jpeg.rtf_format(), Some("\\jpegblip"));
+
+        let gif = EmbeddedImage {
+            data: vec![],
+            mime_type: "image/gif".to_string(),
+        };
+        assert_eq!(gif.rtf_format(), None);
+
+        let webp = EmbeddedImage {
+            data: vec![],
+            mime_type: "image/webp".to_string(),
+        };
+        assert_eq!(webp.rtf_format(), None);
+    }
+
+    #[test]
+    fn test_load_image_embed_none() {
+        let result = load_image("image.png", Path::new("."), EmbedMode::None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_load_image_data_url_skipped() {
+        let result = load_image(
+            "data:image/png;base64,abc",
+            Path::new("."),
+            EmbedMode::All,
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_load_image_remote_url_skipped_in_local_mode() {
+        let result = load_image(
+            "https://example.com/image.png",
+            Path::new("."),
+            EmbedMode::Local,
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_load_image_local_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let image_path = temp_dir.path().join("test.png");
+
+        // Write a minimal PNG header
+        let mut file = std::fs::File::create(&image_path).unwrap();
+        file.write_all(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+            .unwrap();
+
+        let result = load_image("test.png", temp_dir.path(), EmbedMode::Local);
+        assert!(result.is_ok());
+        let img = result.unwrap().unwrap();
+        assert_eq!(img.mime_type, "image/png");
+        assert_eq!(img.data.len(), 8);
+    }
+
+    #[test]
+    fn test_load_image_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = load_image("nonexistent.png", temp_dir.path(), EmbedMode::Local);
+        assert!(matches!(result, Err(ImageError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_load_image_with_fallback_strict_mode() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = load_image_with_fallback(
+            "nonexistent.png",
+            temp_dir.path(),
+            EmbedMode::Local,
+            true, // strict
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_image_with_fallback_graceful_mode() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = load_image_with_fallback(
+            "nonexistent.png",
+            temp_dir.path(),
+            EmbedMode::Local,
+            false, // graceful
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_image_error_display() {
+        let err = ImageError::NotFound("/path/to/image.png".to_string());
+        assert_eq!(err.to_string(), "Image not found: /path/to/image.png");
+
+        let err = ImageError::FetchFailed("http://example.com".to_string(), "timeout".to_string());
+        assert_eq!(
+            err.to_string(),
+            "Failed to fetch image 'http://example.com': timeout"
+        );
+
+        let err = ImageError::ReadFailed("/path".to_string(), "permission denied".to_string());
+        assert_eq!(
+            err.to_string(),
+            "Failed to read image '/path': permission denied"
+        );
+
+        let err = ImageError::InvalidImage("http://example.com".to_string());
+        assert_eq!(err.to_string(), "Invalid image data: http://example.com");
+    }
+}
