@@ -1,5 +1,6 @@
 use crate::image::{load_image_with_fallback, ImageError};
 use crate::EmbedMode;
+use log::warn;
 use markdown::mdast::{AlignKind, Node};
 use std::path::Path;
 
@@ -193,6 +194,11 @@ fn node_to_rtf(node: &Node, rtf: &mut String, ctx: &mut RtfContext) -> Result<()
                     rtf.push_str(&img.to_rtf_hex());
                     rtf.push('}');
                     return Ok(());
+                } else {
+                    warn!(
+                        "RTF does not support {} images, using hyperlink fallback: {}",
+                        img.mime_type, image.url
+                    );
                 }
             }
             // Fallback: link to the image with alt text or URL as display text

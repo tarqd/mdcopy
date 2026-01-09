@@ -22,7 +22,7 @@ pub enum EmbedMode {
 }
 
 #[derive(Parser)]
-#[command(name = "rich-markdown-pbcopy")]
+#[command(name = "mdcopy")]
 #[command(about = "Convert markdown to clipboard with text, HTML, and RTF formats")]
 struct Args {
     /// Input file (use - for stdin, default: stdin)
