@@ -90,8 +90,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v7
@@ -105,3 +111,52 @@ jobs:
           files: artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  homebrew:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets and compute checksums
+        id: checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          # Download each asset and compute SHA256
+          for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
+            url="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/mdcopy-${target}.tar.gz"
+            echo "Downloading ${url}..."
+            curl -sL "${url}" -o "mdcopy-${target}.tar.gz"
+            sha=$(sha256sum "mdcopy-${target}.tar.gz" | cut -d' ' -f1)
+            # Convert target to env var name format
+            var_name=$(echo "${target}" | tr '-' '_' | tr '[:lower:]' '[:upper:]')
+            echo "SHA256_${var_name}=${sha}" >> "$GITHUB_OUTPUT"
+            echo "SHA256_${var_name}=${sha}"
+          done
+
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA256_AARCH64_APPLE_DARWIN: ${{ steps.checksums.outputs.SHA256_AARCH64_APPLE_DARWIN }}
+          SHA256_X86_64_APPLE_DARWIN: ${{ steps.checksums.outputs.SHA256_X86_64_APPLE_DARWIN }}
+          SHA256_AARCH64_UNKNOWN_LINUX_GNU: ${{ steps.checksums.outputs.SHA256_AARCH64_UNKNOWN_LINUX_GNU }}
+          SHA256_X86_64_UNKNOWN_LINUX_GNU: ${{ steps.checksums.outputs.SHA256_X86_64_UNKNOWN_LINUX_GNU }}
+        run: |
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/tarqd/homebrew-tap.git" tap
+          cd tap
+
+          # Update the formula
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Formula/mdcopy.rb
+          sed -i "s/SHA256_AARCH64_APPLE_DARWIN/${SHA256_AARCH64_APPLE_DARWIN}/" Formula/mdcopy.rb
+          sed -i "s/SHA256_X86_64_APPLE_DARWIN/${SHA256_X86_64_APPLE_DARWIN}/" Formula/mdcopy.rb
+          sed -i "s/SHA256_AARCH64_LINUX_GNU/${SHA256_AARCH64_UNKNOWN_LINUX_GNU}/" Formula/mdcopy.rb
+          sed -i "s/SHA256_X86_64_LINUX_GNU/${SHA256_X86_64_UNKNOWN_LINUX_GNU}/" Formula/mdcopy.rb
+
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/mdcopy.rb
+          git commit -m "mdcopy ${VERSION}"
+          git push
