@@ -135,6 +135,8 @@ jobs:
             echo "SHA256_${var_name}=${sha}"
           done
 
+      - uses: actions/checkout@v6
+
       - name: Update Homebrew tap
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -144,17 +146,13 @@ jobs:
           SHA256_AARCH64_UNKNOWN_LINUX_GNU: ${{ steps.checksums.outputs.SHA256_AARCH64_UNKNOWN_LINUX_GNU }}
           SHA256_X86_64_UNKNOWN_LINUX_GNU: ${{ steps.checksums.outputs.SHA256_X86_64_UNKNOWN_LINUX_GNU }}
         run: |
+          # Generate formula from template
+          envsubst < Formula/mdcopy.rb.template > mdcopy.rb
+
+          # Clone tap and update
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/tarqd/homebrew-tap.git" tap
+          cp mdcopy.rb tap/Formula/mdcopy.rb
           cd tap
-
-          # Update the formula
-          sed -i "s/version \".*\"/version \"${VERSION}\"/" Formula/mdcopy.rb
-          sed -i "s/SHA256_AARCH64_APPLE_DARWIN/${SHA256_AARCH64_APPLE_DARWIN}/" Formula/mdcopy.rb
-          sed -i "s/SHA256_X86_64_APPLE_DARWIN/${SHA256_X86_64_APPLE_DARWIN}/" Formula/mdcopy.rb
-          sed -i "s/SHA256_AARCH64_LINUX_GNU/${SHA256_AARCH64_UNKNOWN_LINUX_GNU}/" Formula/mdcopy.rb
-          sed -i "s/SHA256_X86_64_LINUX_GNU/${SHA256_X86_64_UNKNOWN_LINUX_GNU}/" Formula/mdcopy.rb
-
-          # Commit and push
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/mdcopy.rb
