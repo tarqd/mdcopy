@@ -104,7 +104,10 @@ fn load_syntax_set(custom_dir: Option<&PathBuf>) -> SyntaxSet {
                     return ss;
                 }
                 Err(e) => {
-                    warn!("Failed to load custom syntaxes from {:?}: {}", syntax_dir, e);
+                    warn!(
+                        "Failed to load custom syntaxes from {:?}: {}",
+                        syntax_dir, e
+                    );
                 }
             }
         } else {
@@ -133,7 +136,7 @@ fn load_theme_set(custom_dir: Option<&PathBuf>) -> ThemeSet {
             if let Ok(entries) = std::fs::read_dir(&theme_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().map_or(false, |e| e == "tmTheme") {
+                    if path.extension() == Some(std::ffi::OsStr::new("tmTheme")) {
                         match ThemeSet::get_theme(&path) {
                             Ok(theme) => {
                                 let name = path

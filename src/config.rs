@@ -420,7 +420,10 @@ mod tests {
         assert_eq!(mappings.get("ts"), Some(&"TypeScript".to_string()));
         assert_eq!(mappings.get("py"), Some(&"Python".to_string()));
         assert_eq!(mappings.get("rs"), Some(&"Rust".to_string()));
-        assert_eq!(mappings.get("sh"), Some(&"Bourne Again Shell (bash)".to_string()));
+        assert_eq!(
+            mappings.get("sh"),
+            Some(&"Bourne Again Shell (bash)".to_string())
+        );
     }
 
     #[test]
@@ -457,26 +460,32 @@ mod tests {
 
     #[test]
     fn test_highlight_config_effective_theme_explicit() {
-        let mut config = HighlightConfig::default();
-        config.theme = "custom-theme".to_string();
+        let config = HighlightConfig {
+            theme: "custom-theme".to_string(),
+            ..Default::default()
+        };
         assert_eq!(config.effective_theme(), "custom-theme");
     }
 
     #[test]
     fn test_highlight_config_effective_theme_dark_mode() {
-        let mut config = HighlightConfig::default();
-        config.theme_mode = ThemeMode::Dark;
-        config.theme_dark = "dark-theme".to_string();
-        config.theme_light = "light-theme".to_string();
+        let config = HighlightConfig {
+            theme_mode: ThemeMode::Dark,
+            theme_dark: "dark-theme".to_string(),
+            theme_light: "light-theme".to_string(),
+            ..Default::default()
+        };
         assert_eq!(config.effective_theme(), "dark-theme");
     }
 
     #[test]
     fn test_highlight_config_effective_theme_light_mode() {
-        let mut config = HighlightConfig::default();
-        config.theme_mode = ThemeMode::Light;
-        config.theme_dark = "dark-theme".to_string();
-        config.theme_light = "light-theme".to_string();
+        let config = HighlightConfig {
+            theme_mode: ThemeMode::Light,
+            theme_dark: "dark-theme".to_string(),
+            theme_light: "light-theme".to_string(),
+            ..Default::default()
+        };
         assert_eq!(config.effective_theme(), "light-theme");
     }
 
@@ -584,7 +593,10 @@ mod tests {
         assert_eq!(config.highlight.theme_light, "light");
         assert_eq!(config.highlight.theme_mode, ThemeMode::Dark);
         assert_eq!(config.highlight.themes_dir, Some(PathBuf::from("/themes")));
-        assert_eq!(config.highlight.syntaxes_dir, Some(PathBuf::from("/syntaxes")));
+        assert_eq!(
+            config.highlight.syntaxes_dir,
+            Some(PathBuf::from("/syntaxes"))
+        );
     }
 
     #[test]
@@ -630,8 +642,10 @@ mod tests {
 
     #[test]
     fn test_highlight_config_get_themes_dir_custom() {
-        let mut config = HighlightConfig::default();
-        config.themes_dir = Some(PathBuf::from("/custom/themes"));
+        let config = HighlightConfig {
+            themes_dir: Some(PathBuf::from("/custom/themes")),
+            ..Default::default()
+        };
         assert_eq!(
             config.get_themes_dir(),
             Some(PathBuf::from("/custom/themes"))
@@ -640,8 +654,10 @@ mod tests {
 
     #[test]
     fn test_highlight_config_get_syntaxes_dir_custom() {
-        let mut config = HighlightConfig::default();
-        config.syntaxes_dir = Some(PathBuf::from("/custom/syntaxes"));
+        let config = HighlightConfig {
+            syntaxes_dir: Some(PathBuf::from("/custom/syntaxes")),
+            ..Default::default()
+        };
         assert_eq!(
             config.get_syntaxes_dir(),
             Some(PathBuf::from("/custom/syntaxes"))

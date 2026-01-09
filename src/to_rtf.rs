@@ -1,6 +1,6 @@
-use crate::highlight::HighlightContext;
-use crate::image::{load_image_with_fallback, ImageError};
 use crate::EmbedMode;
+use crate::highlight::HighlightContext;
+use crate::image::{ImageError, load_image_with_fallback};
 use log::warn;
 use markdown::mdast::{AlignKind, Node};
 use std::collections::HashMap;
@@ -137,10 +137,14 @@ fn node_to_rtf(node: &Node, rtf: &mut String, ctx: &mut RtfContext) -> Result<()
                 rtf.push_str("{\\f1\\fs20 ");
 
                 for line in code.value.lines() {
-                    if let Ok(ranges) = highlighter.highlight_line(line, &highlight_ctx.syntax_set) {
+                    if let Ok(ranges) = highlighter.highlight_line(line, &highlight_ctx.syntax_set)
+                    {
                         for (style, text) in ranges {
-                            let color_idx =
-                                ctx.get_color_index(style.foreground.r, style.foreground.g, style.foreground.b);
+                            let color_idx = ctx.get_color_index(
+                                style.foreground.r,
+                                style.foreground.g,
+                                style.foreground.b,
+                            );
                             rtf.push_str(&format!("\\cf{} ", color_idx));
                             push_rtf_escaped(rtf, text);
                         }
@@ -239,12 +243,8 @@ fn node_to_rtf(node: &Node, rtf: &mut String, ctx: &mut RtfContext) -> Result<()
             ctx.table_cell_index += 1;
         }
         Node::Image(image) => {
-            let img = load_image_with_fallback(
-                &image.url,
-                ctx.base_dir,
-                ctx.embed_mode,
-                ctx.strict,
-            )?;
+            let img =
+                load_image_with_fallback(&image.url, ctx.base_dir, ctx.embed_mode, ctx.strict)?;
 
             if let Some(img) = img {
                 if let Some(format) = img.rtf_format() {

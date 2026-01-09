@@ -1,5 +1,5 @@
 use crate::EmbedMode;
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use log::{debug, trace, warn};
 use std::fs;
 use std::path::Path;
@@ -364,11 +364,7 @@ mod tests {
 
     #[test]
     fn test_load_image_data_url_skipped() {
-        let result = load_image(
-            "data:image/png;base64,abc",
-            Path::new("."),
-            EmbedMode::All,
-        );
+        let result = load_image("data:image/png;base64,abc", Path::new("."), EmbedMode::All);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }

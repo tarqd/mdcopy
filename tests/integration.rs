@@ -16,7 +16,9 @@ fn run_with_stdin(args: &[&str], input: &str) -> (String, String, bool) {
     let mut child = cmd.spawn().expect("Failed to spawn mdcopy");
 
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.as_bytes()).expect("Failed to write stdin");
+        stdin
+            .write_all(input.as_bytes())
+            .expect("Failed to write stdin");
     }
 
     let output = child.wait_with_output().expect("Failed to wait for mdcopy");
@@ -113,12 +115,7 @@ fn test_input_from_file() {
     let input_path = temp_dir.path().join("input.md");
     std::fs::write(&input_path, "# Test").unwrap();
 
-    let (stdout, _, success) = run_with_args(&[
-        "-i",
-        input_path.to_str().unwrap(),
-        "-o",
-        "-",
-    ]);
+    let (stdout, _, success) = run_with_args(&["-i", input_path.to_str().unwrap(), "-o", "-"]);
     assert!(success);
     assert!(stdout.contains("<h1>Test</h1>"));
 }
@@ -128,10 +125,7 @@ fn test_output_to_file() {
     let temp_dir = TempDir::new().unwrap();
     let output_path = temp_dir.path().join("output.html");
 
-    let (_, _, success) = run_with_stdin(
-        &["-o", output_path.to_str().unwrap()],
-        "# Test",
-    );
+    let (_, _, success) = run_with_stdin(&["-o", output_path.to_str().unwrap()], "# Test");
     assert!(success);
 
     let content = std::fs::read_to_string(&output_path).unwrap();
@@ -142,11 +136,7 @@ fn test_output_to_file() {
 fn test_config_file() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        "[highlight]\nenable = false\n",
-    )
-    .unwrap();
+    std::fs::write(&config_path, "[highlight]\nenable = false\n").unwrap();
 
     let (stdout, _, success) = run_with_stdin(
         &["-o", "-", "-c", config_path.to_str().unwrap()],
@@ -159,10 +149,7 @@ fn test_config_file() {
 
 #[test]
 fn test_embed_mode_none() {
-    let (stdout, _, success) = run_with_stdin(
-        &["-o", "-", "-e", "none"],
-        "![alt](image.png)",
-    );
+    let (stdout, _, success) = run_with_stdin(&["-o", "-", "-e", "none"], "![alt](image.png)");
     assert!(success);
     assert!(stdout.contains("src=\"image.png\""));
 }
@@ -214,7 +201,7 @@ fn test_local_image_embedding() {
     // Create a minimal PNG file (just header)
     std::fs::write(
         &image_path,
-        &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
+        [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
     )
     .unwrap();
 
@@ -235,10 +222,7 @@ fn test_local_image_embedding() {
 
 #[test]
 fn test_gfm_table() {
-    let (stdout, _, success) = run_with_stdin(
-        &["-o", "-"],
-        "| A | B |\n|---|---|\n| 1 | 2 |",
-    );
+    let (stdout, _, success) = run_with_stdin(&["-o", "-"], "| A | B |\n|---|---|\n| 1 | 2 |");
     assert!(success);
     assert!(stdout.contains("<table>"));
     assert!(stdout.contains("<th>"));

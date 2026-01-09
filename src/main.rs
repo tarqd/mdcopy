@@ -7,7 +7,7 @@ mod to_rtf;
 use clap::{Parser, ValueEnum};
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
 use config::{CliArgs, CliHighlightArgs, Config, ThemeMode, default_config_dir};
-use log::{debug, info, LevelFilter};
+use log::{LevelFilter, debug, info};
 use markdown::{Constructs, Options, ParseOptions};
 use std::fs;
 use std::io::{self, Read, Write};
@@ -126,7 +126,7 @@ fn read_input(path: &PathBuf) -> io::Result<String> {
     }
 }
 
-fn resolve_base_dir(input: &PathBuf, root: Option<PathBuf>) -> PathBuf {
+fn resolve_base_dir(input: &std::path::Path, root: Option<PathBuf>) -> PathBuf {
     if let Some(root) = root {
         root
     } else if input.as_os_str() == "-" {
@@ -222,13 +222,27 @@ fn main() -> io::Result<()> {
     let ast = markdown::to_mdast(&markdown_text, &options.parse).expect("Failed to parse markdown");
     debug!("Parsed markdown AST");
 
-    let html_output =
-        to_html::mdast_to_html(&ast, &base_dir, cfg.embed, cfg.strict, highlight_ctx.as_ref())
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    let rtf_output =
-        to_rtf::mdast_to_rtf(&ast, &base_dir, cfg.embed, cfg.strict, highlight_ctx.as_ref())
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    info!("Generated HTML ({} bytes) and RTF ({} bytes)", html_output.len(), rtf_output.len());
+    let html_output = to_html::mdast_to_html(
+        &ast,
+        &base_dir,
+        cfg.embed,
+        cfg.strict,
+        highlight_ctx.as_ref(),
+    )
+    .map_err(io::Error::other)?;
+    let rtf_output = to_rtf::mdast_to_rtf(
+        &ast,
+        &base_dir,
+        cfg.embed,
+        cfg.strict,
+        highlight_ctx.as_ref(),
+    )
+    .map_err(io::Error::other)?;
+    info!(
+        "Generated HTML ({} bytes) and RTF ({} bytes)",
+        html_output.len(),
+        rtf_output.len()
+    );
 
     match cfg.output {
         Some(path) if path.as_os_str() == "-" => {

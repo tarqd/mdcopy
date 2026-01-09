@@ -1,6 +1,6 @@
-use crate::highlight::HighlightContext;
-use crate::image::{load_image_with_fallback, ImageError};
 use crate::EmbedMode;
+use crate::highlight::HighlightContext;
+use crate::image::{ImageError, load_image_with_fallback};
 use markdown::mdast::{AlignKind, Node};
 use std::path::Path;
 use syntect::html::highlighted_html_for_string;
@@ -165,11 +165,29 @@ fn node_to_html(
         Node::Table(table) => {
             html.push_str("<table>\n<thead>\n");
             if let Some(first_row) = table.children.first() {
-                render_table_row(first_row, html, &table.align, true, base_dir, embed_mode, strict, highlight)?;
+                render_table_row(
+                    first_row,
+                    html,
+                    &table.align,
+                    true,
+                    base_dir,
+                    embed_mode,
+                    strict,
+                    highlight,
+                )?;
             }
             html.push_str("</thead>\n<tbody>\n");
             for row in table.children.iter().skip(1) {
-                render_table_row(row, html, &table.align, false, base_dir, embed_mode, strict, highlight)?;
+                render_table_row(
+                    row,
+                    html,
+                    &table.align,
+                    false,
+                    base_dir,
+                    embed_mode,
+                    strict,
+                    highlight,
+                )?;
             }
             html.push_str("</tbody>\n</table>\n");
         }
@@ -181,6 +199,7 @@ fn node_to_html(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_table_row(
     node: &Node,
     html: &mut String,
@@ -277,7 +296,10 @@ mod tests {
 
     #[test]
     fn test_emphasis() {
-        assert_eq!(render_html("*italic text*"), "<p><em>italic text</em></p>\n");
+        assert_eq!(
+            render_html("*italic text*"),
+            "<p><em>italic text</em></p>\n"
+        );
     }
 
     #[test]
