@@ -1,7 +1,33 @@
 use crate::EmbedMode;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use log::{debug, trace, warn};
 use std::fs;
 use std::path::Path;
+
+#[derive(Debug)]
+pub enum ImageError {
+    NotFound(String),
+    FetchFailed(String, String),
+    ReadFailed(String, String),
+    InvalidImage(String),
+}
+
+impl std::fmt::Display for ImageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImageError::NotFound(path) => write!(f, "Image not found: {}", path),
+            ImageError::FetchFailed(url, reason) => {
+                write!(f, "Failed to fetch image '{}': {}", url, reason)
+            }
+            ImageError::ReadFailed(path, reason) => {
+                write!(f, "Failed to read image '{}': {}", path, reason)
+            }
+            ImageError::InvalidImage(url) => write!(f, "Invalid image data: {}", url),
+        }
+    }
+}
+
+impl std::error::Error for ImageError {}
 
 #[derive(Clone)]
 pub struct EmbeddedImage {
@@ -17,38 +43,62 @@ pub fn is_data_url(url: &str) -> bool {
     url.starts_with("data:")
 }
 
-pub fn load_image(url: &str, base_dir: &Path, embed_mode: EmbedMode) -> Option<EmbeddedImage> {
+/// Load an image, returning Ok(Some(image)) on success, Ok(None) if skipped, Err on failure
+pub fn load_image(
+    url: &str,
+    base_dir: &Path,
+    embed_mode: EmbedMode,
+) -> Result<Option<EmbeddedImage>, ImageError> {
     if embed_mode == EmbedMode::None {
-        return None;
+        trace!("Skipping image (embed mode: none): {}", url);
+        return Ok(None);
     }
 
     if is_data_url(url) {
-        return None; // Already embedded
+        trace!("Skipping data URL (already embedded)");
+        return Ok(None);
     }
 
     if is_remote_url(url) {
         if embed_mode == EmbedMode::All {
-            return fetch_remote_image(url);
+            debug!("Fetching remote image: {}", url);
+            return fetch_remote_image(url).map(Some);
         }
-        return None;
+        trace!("Skipping remote image (embed mode: local): {}", url);
+        return Ok(None);
     }
 
     // Local/relative URL
     let path = base_dir.join(url);
-    let data = fs::read(&path).ok()?;
-    let mime_type = guess_mime_type_from_path(&path, &data);
+    debug!("Loading local image: {:?}", path);
 
-    Some(EmbeddedImage { data, mime_type })
+    let data = fs::read(&path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ImageError::NotFound(path.display().to_string())
+        } else {
+            ImageError::ReadFailed(path.display().to_string(), e.to_string())
+        }
+    })?;
+
+    let mime_type = guess_mime_type_from_path(&path, &data);
+    trace!("Loaded {} bytes, mime type: {}", data.len(), mime_type);
+
+    Ok(Some(EmbeddedImage { data, mime_type }))
 }
 
-fn fetch_remote_image(url: &str) -> Option<EmbeddedImage> {
+fn fetch_remote_image(url: &str) -> Result<EmbeddedImage, ImageError> {
     let url = if url.starts_with("//") {
         format!("https:{}", url)
     } else {
         url.to_string()
     };
 
-    let response = ureq::get(&url).call().ok()?;
+    let response = ureq::get(&url)
+        .call()
+        .map_err(|e| ImageError::FetchFailed(url.clone(), e.to_string()))?;
+
+    let status = response.status();
+    trace!("HTTP {} for {}", status, url);
 
     let mime_type = response
         .headers()
@@ -57,15 +107,20 @@ fn fetch_remote_image(url: &str) -> Option<EmbeddedImage> {
         .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    let data = response.into_body().read_to_vec().ok()?;
+    let data = response
+        .into_body()
+        .read_to_vec()
+        .map_err(|e| ImageError::FetchFailed(url.clone(), e.to_string()))?;
+
+    trace!("Fetched {} bytes, content-type: {}", data.len(), mime_type);
 
     // Verify it's actually an image based on magic bytes
     let verified_mime = guess_mime_type_from_data(&data);
     if !verified_mime.starts_with("image/") && verified_mime != "application/octet-stream" {
-        return None;
+        return Err(ImageError::InvalidImage(url));
     }
 
-    Some(EmbeddedImage {
+    Ok(EmbeddedImage {
         data,
         mime_type: if mime_type.starts_with("image/") {
             mime_type
@@ -132,6 +187,26 @@ impl EmbeddedImage {
             "image/png" => Some("\\pngblip"),
             "image/jpeg" => Some("\\jpegblip"),
             _ => None, // RTF only supports PNG and JPEG natively
+        }
+    }
+}
+
+/// Helper to handle image loading with fallback/fail behavior
+pub fn load_image_with_fallback(
+    url: &str,
+    base_dir: &Path,
+    embed_mode: EmbedMode,
+    fail_on_error: bool,
+) -> Result<Option<EmbeddedImage>, ImageError> {
+    match load_image(url, base_dir, embed_mode) {
+        Ok(img) => Ok(img),
+        Err(e) => {
+            if fail_on_error {
+                Err(e)
+            } else {
+                warn!("{}", e);
+                Ok(None)
+            }
         }
     }
 }

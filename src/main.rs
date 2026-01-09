@@ -4,6 +4,7 @@ mod to_rtf;
 
 use clap::{Parser, ValueEnum};
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
+use log::{debug, info, LevelFilter};
 use markdown::{Constructs, Options, ParseOptions};
 use std::fs;
 use std::io::{self, Read, Write};
@@ -39,6 +40,37 @@ struct Args {
     /// Image embedding mode
     #[arg(short, long, value_enum, default_value = "local")]
     embed: EmbedMode,
+
+    /// Fail on errors instead of falling back gracefully
+    #[arg(long, num_args = 0..=1, default_missing_value = "true", default_value = "false")]
+    strict: bool,
+
+    /// Increase logging verbosity (-v, -vv, -vvv)
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
+
+    /// Suppress all output except errors
+    #[arg(short, long)]
+    quiet: bool,
+}
+
+fn init_logger(verbose: u8, quiet: bool) {
+    let level = if quiet {
+        LevelFilter::Error
+    } else {
+        match verbose {
+            0 => LevelFilter::Warn,
+            1 => LevelFilter::Info,
+            2 => LevelFilter::Debug,
+            _ => LevelFilter::Trace,
+        }
+    };
+
+    env_logger::Builder::new()
+        .filter_level(level)
+        .format_target(false)
+        .format_timestamp(None)
+        .init();
 }
 
 fn read_input(path: &PathBuf) -> io::Result<String> {
@@ -66,9 +98,17 @@ fn resolve_base_dir(input: &PathBuf, root: Option<PathBuf>) -> PathBuf {
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
+    init_logger(args.verbose, args.quiet);
+
+    debug!("Input: {:?}", args.input);
+    debug!("Embed mode: {:?}", args.embed);
+    debug!("Strict mode: {}", args.strict);
 
     let markdown_text = read_input(&args.input)?;
+    info!("Read {} bytes of markdown", markdown_text.len());
+
     let base_dir = resolve_base_dir(&args.input, args.root);
+    debug!("Base directory for images: {:?}", base_dir);
 
     let options = Options {
         parse: ParseOptions {
@@ -79,17 +119,26 @@ fn main() -> io::Result<()> {
     };
 
     let ast = markdown::to_mdast(&markdown_text, &options.parse).expect("Failed to parse markdown");
-    let html_output = to_html::mdast_to_html(&ast, &base_dir, args.embed);
-    let rtf_output = to_rtf::mdast_to_rtf(&ast, &base_dir, args.embed);
+    debug!("Parsed markdown AST");
+
+    let html_output = to_html::mdast_to_html(&ast, &base_dir, args.embed, args.strict)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let rtf_output = to_rtf::mdast_to_rtf(&ast, &base_dir, args.embed, args.strict)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    info!("Generated HTML ({} bytes) and RTF ({} bytes)", html_output.len(), rtf_output.len());
 
     match args.output {
         Some(path) if path.as_os_str() == "-" => {
+            debug!("Writing HTML to stdout");
             io::stdout().write_all(html_output.as_bytes())?;
         }
         Some(path) => {
-            fs::write(path, &html_output)?;
+            debug!("Writing HTML to {:?}", path);
+            fs::write(&path, &html_output)?;
+            info!("Wrote output to {:?}", path);
         }
         None => {
+            debug!("Writing to clipboard");
             let ctx = ClipboardContext::new().expect("Failed to create clipboard context");
             ctx.set(vec![
                 ClipboardContent::Text(markdown_text),
@@ -97,6 +146,7 @@ fn main() -> io::Result<()> {
                 ClipboardContent::Rtf(rtf_output),
             ])
             .expect("Failed to set clipboard content");
+            info!("Copied to clipboard (text, HTML, RTF)");
         }
     }
 

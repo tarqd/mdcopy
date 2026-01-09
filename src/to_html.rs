@@ -1,32 +1,43 @@
-use crate::image::load_image;
+use crate::image::{load_image_with_fallback, ImageError};
 use crate::EmbedMode;
 use markdown::mdast::{AlignKind, Node};
 use std::path::Path;
 
-pub fn mdast_to_html(node: &Node, base_dir: &Path, embed_mode: EmbedMode) -> String {
+pub fn mdast_to_html(
+    node: &Node,
+    base_dir: &Path,
+    embed_mode: EmbedMode,
+    strict: bool,
+) -> Result<String, ImageError> {
     let mut html = String::new();
-    node_to_html(node, &mut html, base_dir, embed_mode);
-    html
+    node_to_html(node, &mut html, base_dir, embed_mode, strict)?;
+    Ok(html)
 }
 
-fn node_to_html(node: &Node, html: &mut String, base_dir: &Path, embed_mode: EmbedMode) {
+fn node_to_html(
+    node: &Node,
+    html: &mut String,
+    base_dir: &Path,
+    embed_mode: EmbedMode,
+    strict: bool,
+) -> Result<(), ImageError> {
     match node {
         Node::Root(root) => {
             for child in &root.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
         }
         Node::Heading(heading) => {
             html.push_str(&format!("<h{}>", heading.depth));
             for child in &heading.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
             html.push_str(&format!("</h{}>\n", heading.depth));
         }
         Node::Paragraph(para) => {
             html.push_str("<p>");
             for child in &para.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
             html.push_str("</p>\n");
         }
@@ -36,14 +47,14 @@ fn node_to_html(node: &Node, html: &mut String, base_dir: &Path, embed_mode: Emb
         Node::Strong(strong) => {
             html.push_str("<strong>");
             for child in &strong.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
             html.push_str("</strong>");
         }
         Node::Emphasis(em) => {
             html.push_str("<em>");
             for child in &em.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
             html.push_str("</em>");
         }
@@ -64,16 +75,15 @@ fn node_to_html(node: &Node, html: &mut String, base_dir: &Path, embed_mode: Emb
         Node::Link(link) => {
             html.push_str(&format!("<a href=\"{}\">", html_escape(&link.url)));
             for child in &link.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
             html.push_str("</a>");
         }
         Node::Image(image) => {
-            let src = if let Some(img) = load_image(&image.url, base_dir, embed_mode) {
-                img.to_data_url()
-            } else {
-                image.url.clone()
-            };
+            let img = load_image_with_fallback(&image.url, base_dir, embed_mode, strict)?;
+            let src = img
+                .map(|i| i.to_data_url())
+                .unwrap_or_else(|| image.url.clone());
             let alt = if !image.alt.is_empty() {
                 &image.alt
             } else {
@@ -92,7 +102,7 @@ fn node_to_html(node: &Node, html: &mut String, base_dir: &Path, embed_mode: Emb
                 html.push_str("<ul>\n");
             }
             for child in &list.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
             if list.ordered {
                 html.push_str("</ol>\n");
@@ -103,14 +113,14 @@ fn node_to_html(node: &Node, html: &mut String, base_dir: &Path, embed_mode: Emb
         Node::ListItem(item) => {
             html.push_str("<li>");
             for child in &item.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
             html.push_str("</li>\n");
         }
         Node::Blockquote(bq) => {
             html.push_str("<blockquote>\n");
             for child in &bq.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
             html.push_str("</blockquote>\n");
         }
@@ -123,18 +133,18 @@ fn node_to_html(node: &Node, html: &mut String, base_dir: &Path, embed_mode: Emb
         Node::Delete(del) => {
             html.push_str("<del>");
             for child in &del.children {
-                node_to_html(child, html, base_dir, embed_mode);
+                node_to_html(child, html, base_dir, embed_mode, strict)?;
             }
             html.push_str("</del>");
         }
         Node::Table(table) => {
             html.push_str("<table>\n<thead>\n");
             if let Some(first_row) = table.children.first() {
-                render_table_row(first_row, html, &table.align, true, base_dir, embed_mode);
+                render_table_row(first_row, html, &table.align, true, base_dir, embed_mode, strict)?;
             }
             html.push_str("</thead>\n<tbody>\n");
             for row in table.children.iter().skip(1) {
-                render_table_row(row, html, &table.align, false, base_dir, embed_mode);
+                render_table_row(row, html, &table.align, false, base_dir, embed_mode, strict)?;
             }
             html.push_str("</tbody>\n</table>\n");
         }
@@ -143,6 +153,7 @@ fn node_to_html(node: &Node, html: &mut String, base_dir: &Path, embed_mode: Emb
         }
         _ => {}
     }
+    Ok(())
 }
 
 fn render_table_row(
@@ -152,7 +163,8 @@ fn render_table_row(
     is_header: bool,
     base_dir: &Path,
     embed_mode: EmbedMode,
-) {
+    strict: bool,
+) -> Result<(), ImageError> {
     if let Node::TableRow(row) = node {
         html.push_str("<tr>\n");
         for (i, cell) in row.children.iter().enumerate() {
@@ -166,13 +178,14 @@ fn render_table_row(
             html.push_str(&format!("<{}{}>", tag, align_attr));
             if let Node::TableCell(cell) = cell {
                 for child in &cell.children {
-                    node_to_html(child, html, base_dir, embed_mode);
+                    node_to_html(child, html, base_dir, embed_mode, strict)?;
                 }
             }
             html.push_str(&format!("</{}>\n", tag));
         }
         html.push_str("</tr>\n");
     }
+    Ok(())
 }
 
 fn html_escape(s: &str) -> String {
