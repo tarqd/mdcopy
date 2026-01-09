@@ -149,12 +149,16 @@ jobs:
           # Generate formula from template
           envsubst < Formula/mdcopy.rb.template > mdcopy.rb
 
+          # Configure git to use token via credential helper (keeps token out of URLs/logs)
+          git config --global credential.helper store
+          echo "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com" > ~/.git-credentials
+
           # Clone tap and update
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/tarqd/homebrew-tap.git" tap
-          cp mdcopy.rb tap/Formula/mdcopy.rb
+          git clone https://github.com/tarqd/homebrew-tap.git tap
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp ../mdcopy.rb Formula/mdcopy.rb
           git add Formula/mdcopy.rb
           git commit -m "mdcopy ${VERSION}"
           git push
