@@ -3,6 +3,8 @@ mod highlight;
 mod image;
 mod to_html;
 mod to_rtf;
+#[cfg(target_os = "macos")]
+mod to_nsattributedstring;
 
 use clap::{Parser, ValueEnum};
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
