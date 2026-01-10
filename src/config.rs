@@ -16,6 +16,15 @@ pub struct FileHighlightConfig {
     pub languages: HashMap<String, String>,
 }
 
+/// Optimize configuration from file
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FileOptimizeConfig {
+    pub enable: Option<bool>,
+    pub max_dimension: Option<u32>,
+    pub quality: Option<u8>,
+}
+
 /// Configuration loaded from file
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -27,6 +36,8 @@ pub struct FileConfig {
     pub strict: Option<bool>,
     #[serde(default)]
     pub highlight: FileHighlightConfig,
+    #[serde(default)]
+    pub optimize: FileOptimizeConfig,
 }
 
 /// Resolved highlight configuration
@@ -51,6 +62,24 @@ impl Default for HighlightConfig {
     }
 }
 
+/// Resolved optimize configuration
+#[derive(Debug, Clone)]
+pub struct OptimizeConfig {
+    pub enabled: bool,
+    pub max_dimension: u32,
+    pub quality: u8,
+}
+
+impl Default for OptimizeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_dimension: 1200,
+            quality: 80,
+        }
+    }
+}
+
 /// Resolved configuration with all sources merged
 #[derive(Debug)]
 pub struct Config {
@@ -60,6 +89,7 @@ pub struct Config {
     pub embed: EmbedMode,
     pub strict: bool,
     pub highlight: HighlightConfig,
+    pub optimize: OptimizeConfig,
 }
 
 impl Default for Config {
@@ -71,6 +101,7 @@ impl Default for Config {
             embed: EmbedMode::Local,
             strict: false,
             highlight: HighlightConfig::default(),
+            optimize: OptimizeConfig::default(),
         }
     }
 }
@@ -191,6 +222,13 @@ pub struct CliHighlightArgs {
     pub syntaxes_dir: Option<PathBuf>,
 }
 
+/// CLI argument values for optimize settings
+pub struct CliOptimizeArgs {
+    pub enable: Option<bool>,
+    pub max_dimension: Option<u32>,
+    pub quality: Option<u8>,
+}
+
 /// CLI argument values (None means not specified)
 pub struct CliArgs {
     pub input: Option<PathBuf>,
@@ -199,6 +237,7 @@ pub struct CliArgs {
     pub embed: Option<EmbedMode>,
     pub strict: Option<bool>,
     pub highlight: CliHighlightArgs,
+    pub optimize: CliOptimizeArgs,
 }
 
 impl HighlightConfig {
@@ -268,6 +307,17 @@ impl Config {
             config.highlight.languages.insert(k, v);
         }
 
+        // Apply optimize config from file
+        if let Some(v) = file_config.optimize.enable {
+            config.optimize.enabled = v;
+        }
+        if let Some(v) = file_config.optimize.max_dimension {
+            config.optimize.max_dimension = v;
+        }
+        if let Some(v) = file_config.optimize.quality {
+            config.optimize.quality = v;
+        }
+
         // Apply environment variables (higher priority than config file)
         if let Some(v) = env_var("input") {
             config.input = PathBuf::from(v);
@@ -297,6 +347,17 @@ impl Config {
         }
         if let Some(v) = env_var("highlight_syntaxes_dir") {
             config.highlight.syntaxes_dir = Some(PathBuf::from(v));
+        }
+
+        // Optimize env vars (MDCOPY_OPTIMIZE_*)
+        if let Some(v) = env_var("optimize").and_then(|s| parse_bool(&s)) {
+            config.optimize.enabled = v;
+        }
+        if let Some(v) = env_var("optimize_max_dimension").and_then(|s| s.parse().ok()) {
+            config.optimize.max_dimension = v;
+        }
+        if let Some(v) = env_var("optimize_quality").and_then(|s| s.parse().ok()) {
+            config.optimize.quality = v;
         }
 
         // Apply CLI arguments (highest priority)
@@ -330,6 +391,17 @@ impl Config {
             config.highlight.syntaxes_dir = Some(v);
         }
 
+        // Optimize CLI args
+        if let Some(v) = cli.optimize.enable {
+            config.optimize.enabled = v;
+        }
+        if let Some(v) = cli.optimize.max_dimension {
+            config.optimize.max_dimension = v;
+        }
+        if let Some(v) = cli.optimize.quality {
+            config.optimize.quality = v;
+        }
+
         config
     }
 }
@@ -353,6 +425,11 @@ mod tests {
                 themes_dir: None,
                 syntaxes_dir: None,
             },
+            optimize: CliOptimizeArgs {
+                enable: None,
+                max_dimension: None,
+                quality: None,
+            },
         }
     }
 
@@ -366,6 +443,9 @@ mod tests {
         assert!(!config.strict);
         assert!(config.highlight.enable);
         assert_eq!(config.highlight.theme, "base16-ocean.dark");
+        assert!(config.optimize.enabled);
+        assert_eq!(config.optimize.max_dimension, 1200);
+        assert_eq!(config.optimize.quality, 80);
     }
 
     #[test]
@@ -503,6 +583,11 @@ mod tests {
                 themes_dir: Some(PathBuf::from("/themes")),
                 syntaxes_dir: Some(PathBuf::from("/syntaxes")),
             },
+            optimize: CliOptimizeArgs {
+                enable: Some(false),
+                max_dimension: Some(800),
+                quality: Some(75),
+            },
         };
 
         let config = Config::build(cli, None);
@@ -519,6 +604,9 @@ mod tests {
             config.highlight.syntaxes_dir,
             Some(PathBuf::from("/syntaxes"))
         );
+        assert!(!config.optimize.enabled);
+        assert_eq!(config.optimize.max_dimension, 800);
+        assert_eq!(config.optimize.quality, 75);
     }
 
     #[test]
@@ -595,5 +683,8 @@ mod tests {
         assert!(config.embed.is_none());
         assert!(config.strict.is_none());
         assert!(config.highlight.enable.is_none());
+        assert!(config.optimize.enable.is_none());
+        assert!(config.optimize.max_dimension.is_none());
+        assert!(config.optimize.quality.is_none());
     }
 }

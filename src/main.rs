@@ -7,7 +7,7 @@ mod to_rtf;
 
 use clap::{Parser, ValueEnum};
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
-use config::{CliArgs, CliHighlightArgs, Config, default_config_dir};
+use config::{CliArgs, CliHighlightArgs, CliOptimizeArgs, Config, default_config_dir};
 use log::{LevelFilter, debug, info};
 use markdown::{Constructs, Options, ParseOptions};
 use std::fs;
@@ -88,6 +88,22 @@ struct Args {
     /// Custom syntaxes directory
     #[arg(long = "highlight-syntaxes-dir")]
     highlight_syntaxes_dir: Option<PathBuf>,
+
+    /// Enable image optimization (default: true)
+    #[arg(long, overrides_with = "no_optimize")]
+    optimize: bool,
+
+    /// Disable image optimization
+    #[arg(long, overrides_with = "optimize")]
+    no_optimize: bool,
+
+    /// Max image dimension in pixels (default: 1200)
+    #[arg(long = "optimize-max-dimension")]
+    optimize_max_dimension: Option<u32>,
+
+    /// Image quality 1-100 (default: 80)
+    #[arg(long = "optimize-quality")]
+    optimize_quality: Option<u8>,
 
     /// Path to configuration file
     #[arg(short, long)]
@@ -184,6 +200,15 @@ fn main() -> io::Result<()> {
             themes_dir: args.highlight_themes_dir,
             syntaxes_dir: args.highlight_syntaxes_dir,
         },
+        optimize: CliOptimizeArgs {
+            enable: match (args.optimize, args.no_optimize) {
+                (true, false) => Some(true),
+                (false, true) => Some(false),
+                _ => None, // Neither or both (last wins via overrides_with, but both false = neither)
+            },
+            max_dimension: args.optimize_max_dimension,
+            quality: args.optimize_quality,
+        },
     };
 
     let cfg = Config::build(cli_args, args.config);
@@ -194,6 +219,10 @@ fn main() -> io::Result<()> {
     debug!("Strict mode: {}", cfg.strict);
     debug!("Syntax highlighting: {}", cfg.highlight.enable);
     debug!("Theme: {}", effective_theme);
+    debug!(
+        "Image optimization: {} (max_dim={}, quality={})",
+        cfg.optimize.enabled, cfg.optimize.max_dimension, cfg.optimize.quality
+    );
 
     let highlight_ctx = if !cfg.highlight.enable {
         None
@@ -241,6 +270,16 @@ fn main() -> io::Result<()> {
         (None, false) => vec![ClipboardFormat::Html, ClipboardFormat::Rtf],
     };
 
+    // Create shared image cache to avoid duplicate loads across formats
+    let image_cache = image::ImageCache::new();
+
+    // Prepare optimize config
+    let optimize = if cfg.optimize.enabled {
+        Some(&cfg.optimize)
+    } else {
+        None
+    };
+
     // Generate requested outputs
     let html_output = if formats.contains(&ClipboardFormat::Html) {
         Some(
@@ -250,6 +289,8 @@ fn main() -> io::Result<()> {
                 cfg.embed,
                 cfg.strict,
                 highlight_ctx.as_ref(),
+                &image_cache,
+                optimize,
             )
             .map_err(io::Error::other)?,
         )
@@ -265,6 +306,8 @@ fn main() -> io::Result<()> {
                 cfg.embed,
                 cfg.strict,
                 highlight_ctx.as_ref(),
+                &image_cache,
+                optimize,
             )
             .map_err(io::Error::other)?,
         )
@@ -274,7 +317,7 @@ fn main() -> io::Result<()> {
 
     let markdown_output = if formats.contains(&ClipboardFormat::Markdown) {
         Some(
-            to_markdown::mdast_to_markdown(&ast, &base_dir, cfg.embed, cfg.strict)
+            to_markdown::mdast_to_markdown(&ast, &base_dir, cfg.embed, cfg.strict, &image_cache, optimize)
                 .map_err(io::Error::other)?,
         )
     } else {

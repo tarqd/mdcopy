@@ -1,5 +1,6 @@
 use crate::EmbedMode;
-use crate::image::{ImageError, load_image_with_fallback};
+use crate::config::OptimizeConfig;
+use crate::image::{ImageCache, ImageError};
 use markdown::mdast::{AlignKind, Node};
 use std::path::Path;
 
@@ -8,8 +9,10 @@ pub fn mdast_to_markdown(
     base_dir: &Path,
     embed_mode: EmbedMode,
     strict: bool,
+    image_cache: &ImageCache,
+    optimize: Option<&OptimizeConfig>,
 ) -> Result<String, ImageError> {
-    let mut ctx = MarkdownContext::new(base_dir, embed_mode, strict);
+    let mut ctx = MarkdownContext::new(base_dir, embed_mode, strict, image_cache, optimize);
     let mut output = String::new();
     node_to_markdown(node, &mut output, &mut ctx)?;
     // Trim trailing whitespace but ensure single trailing newline
@@ -25,6 +28,8 @@ struct MarkdownContext<'a> {
     base_dir: &'a Path,
     embed_mode: EmbedMode,
     strict: bool,
+    image_cache: &'a ImageCache,
+    optimize: Option<&'a OptimizeConfig>,
     /// Current list depth for indentation
     list_depth: usize,
     /// Stack of list types (true = ordered, false = unordered)
@@ -36,11 +41,19 @@ struct MarkdownContext<'a> {
 }
 
 impl<'a> MarkdownContext<'a> {
-    fn new(base_dir: &'a Path, embed_mode: EmbedMode, strict: bool) -> Self {
+    fn new(
+        base_dir: &'a Path,
+        embed_mode: EmbedMode,
+        strict: bool,
+        image_cache: &'a ImageCache,
+        optimize: Option<&'a OptimizeConfig>,
+    ) -> Self {
         Self {
             base_dir,
             embed_mode,
             strict,
+            image_cache,
+            optimize,
             list_depth: 0,
             list_stack: Vec::new(),
             list_indices: Vec::new(),
@@ -175,7 +188,7 @@ fn node_to_markdown(
         }
         Node::Image(image) => {
             let img =
-                load_image_with_fallback(&image.url, ctx.base_dir, ctx.embed_mode, ctx.strict)?;
+                ctx.image_cache.get_or_load(&image.url, ctx.base_dir, ctx.embed_mode, ctx.strict, ctx.optimize)?;
             let src = img
                 .map(|i| i.to_data_url())
                 .unwrap_or_else(|| image.url.clone());
@@ -343,39 +356,43 @@ fn render_table(
     md: &mut String,
     ctx: &mut MarkdownContext,
 ) -> Result<(), ImageError> {
-    // Calculate column widths for alignment
-    let mut col_widths: Vec<usize> = vec![3; table.align.len()]; // minimum width of 3 for ---
-
-    // First pass: calculate max width per column
+    // Pre-render all cells in a single pass to avoid duplicate image loading
+    let mut rendered_rows: Vec<Vec<String>> = Vec::new();
     for row in &table.children {
         if let Node::TableRow(row) = row {
-            for (i, cell) in row.children.iter().enumerate() {
+            let mut row_cells = Vec::new();
+            for cell in &row.children {
                 if let Node::TableCell(cell) = cell {
                     let mut cell_content = String::new();
                     for child in &cell.children {
                         node_to_markdown(child, &mut cell_content, ctx)?;
                     }
-                    if i < col_widths.len() {
-                        col_widths[i] = col_widths[i].max(cell_content.len());
-                    }
+                    row_cells.push(cell_content);
+                } else {
+                    row_cells.push(String::new());
                 }
+            }
+            rendered_rows.push(row_cells);
+        }
+    }
+
+    // Calculate column widths from pre-rendered content
+    let mut col_widths: Vec<usize> = vec![3; table.align.len()]; // minimum width of 3 for ---
+    for row_cells in &rendered_rows {
+        for (i, cell_content) in row_cells.iter().enumerate() {
+            if i < col_widths.len() {
+                col_widths[i] = col_widths[i].max(cell_content.len());
             }
         }
     }
 
-    // Render header row
-    if let Some(Node::TableRow(row)) = table.children.first() {
+    // Render header row using pre-rendered content
+    if let Some(header_cells) = rendered_rows.first() {
         md.push('|');
-        for (i, cell) in row.children.iter().enumerate() {
+        for (i, cell_content) in header_cells.iter().enumerate() {
             md.push(' ');
-            if let Node::TableCell(cell) = cell {
-                let mut cell_content = String::new();
-                for child in &cell.children {
-                    node_to_markdown(child, &mut cell_content, ctx)?;
-                }
-                let width = col_widths.get(i).copied().unwrap_or(3);
-                md.push_str(&format!("{:width$}", cell_content, width = width));
-            }
+            let width = col_widths.get(i).copied().unwrap_or(3);
+            md.push_str(&format!("{:width$}", cell_content, width = width));
             md.push_str(" |");
         }
         md.push('\n');
@@ -408,24 +425,16 @@ fn render_table(
     }
     md.push('\n');
 
-    // Render body rows
-    for row in table.children.iter().skip(1) {
-        if let Node::TableRow(row) = row {
-            md.push('|');
-            for (i, cell) in row.children.iter().enumerate() {
-                md.push(' ');
-                if let Node::TableCell(cell) = cell {
-                    let mut cell_content = String::new();
-                    for child in &cell.children {
-                        node_to_markdown(child, &mut cell_content, ctx)?;
-                    }
-                    let width = col_widths.get(i).copied().unwrap_or(3);
-                    md.push_str(&format!("{:width$}", cell_content, width = width));
-                }
-                md.push_str(" |");
-            }
-            md.push('\n');
+    // Render body rows using pre-rendered content
+    for row_cells in rendered_rows.iter().skip(1) {
+        md.push('|');
+        for (i, cell_content) in row_cells.iter().enumerate() {
+            md.push(' ');
+            let width = col_widths.get(i).copied().unwrap_or(3);
+            md.push_str(&format!("{:width$}", cell_content, width = width));
+            md.push_str(" |");
         }
+        md.push('\n');
     }
 
     Ok(())
@@ -469,7 +478,8 @@ mod tests {
 
     fn roundtrip(md: &str) -> String {
         let ast = parse_markdown(md);
-        mdast_to_markdown(&ast, Path::new("."), crate::EmbedMode::None, false).unwrap()
+        let cache = crate::image::ImageCache::new();
+        mdast_to_markdown(&ast, Path::new("."), crate::EmbedMode::None, false, &cache, None).unwrap()
     }
 
     #[test]

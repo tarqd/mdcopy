@@ -1,8 +1,20 @@
 use crate::EmbedMode;
+use crate::config::OptimizeConfig;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use log::{debug, trace, warn};
+use rimage::codecs::mozjpeg::{MozJpegEncoder, MozJpegOptions};
+use rimage::codecs::oxipng::OxiPngEncoder;
+use rimage::operations::resize::{FilterType, Resize, ResizeAlg};
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::io::{BufReader, Cursor};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use tempfile::TempDir;
+use zune_core::colorspace::ColorSpace;
+use zune_core::options::DecoderOptions;
+use zune_image::image::Image;
+use zune_image::traits::{EncoderTrait, OperationsTrait};
 
 #[derive(Debug)]
 pub enum ImageError {
@@ -208,6 +220,289 @@ pub fn load_image_with_fallback(
                 Ok(None)
             }
         }
+    }
+}
+
+/// Cache for images to avoid duplicate loads/fetches/optimization.
+/// Maps source URL/path to cached file path in temp directory.
+pub struct ImageCache {
+    /// Temp directory for cached images (cleaned up on drop)
+    temp_dir: Option<TempDir>,
+    /// Maps source URL/path to cached file path
+    cache: Mutex<HashMap<String, PathBuf>>,
+}
+
+impl ImageCache {
+    pub fn new() -> Self {
+        let temp_dir = TempDir::new().ok();
+        if temp_dir.is_none() {
+            warn!("Failed to create temp directory for image cache");
+        }
+        Self {
+            temp_dir,
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Load an image, using cache to avoid duplicate work.
+    /// When optimization is enabled, both local and remote images are
+    /// processed and cached to temp directory.
+    pub fn get_or_load(
+        &self,
+        url: &str,
+        base_dir: &Path,
+        embed_mode: EmbedMode,
+        strict: bool,
+        optimize: Option<&OptimizeConfig>,
+    ) -> Result<Option<EmbeddedImage>, ImageError> {
+        // Skip if embedding is disabled or it's a data URL
+        if embed_mode == EmbedMode::None || is_data_url(url) {
+            return load_image_with_fallback(url, base_dir, embed_mode, strict);
+        }
+
+        // Remote images in local-only mode: skip
+        if is_remote_url(url) && embed_mode != EmbedMode::All {
+            return Ok(None);
+        }
+
+        // Check cache first
+        {
+            let cache = self.cache.lock().unwrap();
+            if let Some(cached_path) = cache.get(url) {
+                trace!("Image cache hit: {}", url);
+                return load_cached_image(cached_path);
+            }
+        }
+
+        // Load the original image
+        let original = if is_remote_url(url) {
+            self.fetch_remote(url, strict)?
+        } else {
+            load_image_with_fallback(url, base_dir, embed_mode, strict)?
+        };
+
+        // If optimization enabled, optimize and cache
+        // If no optimization but remote, we already cached the download
+        match (optimize.filter(|c| c.enabled), original) {
+            (Some(config), Some(img)) => self.optimize_and_cache(url, &img, config, strict),
+            (_, original) => Ok(original),
+        }
+    }
+
+    /// Fetch a remote image, caching the raw download
+    fn fetch_remote(
+        &self,
+        url: &str,
+        strict: bool,
+    ) -> Result<Option<EmbeddedImage>, ImageError> {
+        let temp_dir = match &self.temp_dir {
+            Some(dir) => dir.path(),
+            None => {
+                // No temp dir, fetch directly without caching
+                return match fetch_remote_image(url) {
+                    Ok(img) => Ok(Some(img)),
+                    Err(e) if strict => Err(e),
+                    Err(e) => {
+                        warn!("{}", e);
+                        Ok(None)
+                    }
+                };
+            }
+        };
+
+        trace!("Fetching remote image: {}", url);
+        let filename = url_to_filename(url);
+        let cached_path = temp_dir.join(&filename);
+
+        match fetch_and_save_remote_image(url, &cached_path) {
+            Ok(()) => {
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .insert(url.to_string(), cached_path.clone());
+                load_cached_image(&cached_path)
+            }
+            Err(e) if strict => Err(e),
+            Err(e) => {
+                warn!("{}", e);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Optimize an image and cache the result
+    fn optimize_and_cache(
+        &self,
+        source: &str,
+        img: &EmbeddedImage,
+        config: &OptimizeConfig,
+        strict: bool,
+    ) -> Result<Option<EmbeddedImage>, ImageError> {
+        match optimize_image(&img.data, config) {
+            Ok(optimized) => {
+                trace!(
+                    "Optimized image: {} -> {} bytes",
+                    img.data.len(),
+                    optimized.data.len()
+                );
+
+                // Cache to temp file
+                if let Some(temp_dir) = &self.temp_dir {
+                    let filename = url_to_filename(source);
+                    let cached_path = temp_dir.path().join(filename);
+
+                    if let Err(e) = fs::write(&cached_path, &optimized.data) {
+                        trace!("Failed to cache optimized image: {}", e);
+                    } else {
+                        self.cache
+                            .lock()
+                            .unwrap()
+                            .insert(source.to_string(), cached_path);
+                    }
+                }
+
+                Ok(Some(optimized))
+            }
+            Err(e) => {
+                if strict {
+                    warn!("Image optimization failed: {}", e);
+                } else {
+                    trace!("Image optimization failed, using original: {}", e);
+                }
+                Ok(Some(img.clone()))
+            }
+        }
+    }
+}
+
+impl Default for ImageCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Generate a filesystem-safe filename from a URL (hash-based)
+fn url_to_filename(url: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Fetch a remote image and save it to a file
+fn fetch_and_save_remote_image(url: &str, dest: &Path) -> Result<(), ImageError> {
+    let url = if url.starts_with("//") {
+        format!("https:{}", url)
+    } else {
+        url.to_string()
+    };
+
+    debug!("Fetching remote image: {}", url);
+
+    let response = ureq::get(&url)
+        .call()
+        .map_err(|e| ImageError::FetchFailed(url.clone(), e.to_string()))?;
+
+    let data = response
+        .into_body()
+        .read_to_vec()
+        .map_err(|e| ImageError::FetchFailed(url.clone(), e.to_string()))?;
+
+    // Verify it's actually an image
+    let mime = guess_mime_type_from_data(&data);
+    if !mime.starts_with("image/") && mime != "application/octet-stream" {
+        return Err(ImageError::InvalidImage(url));
+    }
+
+    fs::write(dest, &data).map_err(|e| ImageError::ReadFailed(dest.display().to_string(), e.to_string()))?;
+
+    trace!("Cached remote image to {:?}", dest);
+    Ok(())
+}
+
+/// Load a cached remote image from temp file
+fn load_cached_image(path: &Path) -> Result<Option<EmbeddedImage>, ImageError> {
+    let data = fs::read(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ImageError::NotFound(path.display().to_string())
+        } else {
+            ImageError::ReadFailed(path.display().to_string(), e.to_string())
+        }
+    })?;
+
+    // Detect mime type from magic bytes (cached files have hash names, no extension)
+    let mime_type = guess_mime_type_from_data(&data);
+    Ok(Some(EmbeddedImage { data, mime_type }))
+}
+
+/// Optimize an image by resizing and compressing.
+/// Returns JPEG for opaque images, PNG for images with transparency.
+pub fn optimize_image(
+    data: &[u8],
+    config: &OptimizeConfig,
+) -> Result<EmbeddedImage, ImageError> {
+    // Decode image using BufReader<Cursor> which implements BufRead + Seek
+    let reader = BufReader::new(Cursor::new(data));
+    let mut img = Image::read(reader, DecoderOptions::default())
+        .map_err(|e| ImageError::InvalidImage(format!("Failed to decode image: {:?}", e)))?;
+
+    // Get dimensions
+    let (width, height) = img.dimensions();
+    let max_dim = config.max_dimension as usize;
+
+    debug!(
+        "Optimizing image: {}x{}, max_dim={}, quality={}",
+        width, height, max_dim, config.quality
+    );
+
+    // Resize if needed (maintain aspect ratio)
+    if width > max_dim || height > max_dim {
+        let scale = max_dim as f32 / width.max(height) as f32;
+        let new_width = (width as f32 * scale) as usize;
+        let new_height = (height as f32 * scale) as usize;
+
+        debug!("Resizing from {}x{} to {}x{}", width, height, new_width, new_height);
+
+        let resize = Resize::new(new_width, new_height, ResizeAlg::Convolution(FilterType::Lanczos3));
+        resize.execute_impl(&mut img)
+            .map_err(|e| ImageError::InvalidImage(format!("Failed to resize image: {:?}", e)))?;
+    }
+
+    // Check if image has alpha channel
+    let has_alpha = matches!(
+        img.colorspace(),
+        ColorSpace::RGBA | ColorSpace::BGRA | ColorSpace::ARGB | ColorSpace::LumaA
+    );
+
+    // Encode based on transparency
+    if has_alpha {
+        // PNG for transparency
+        debug!("Encoding as PNG (has alpha channel)");
+        let mut encoder = OxiPngEncoder::new();
+        let mut result = Vec::new();
+        encoder.encode(&img, &mut result)
+            .map_err(|e| ImageError::InvalidImage(format!("Failed to encode PNG: {:?}", e)))?;
+        Ok(EmbeddedImage {
+            data: result,
+            mime_type: "image/png".to_string(),
+        })
+    } else {
+        // JPEG for opaque (better compression)
+        debug!("Encoding as JPEG (opaque, quality={})", config.quality);
+        let options = MozJpegOptions {
+            quality: config.quality as f32,
+            ..Default::default()
+        };
+        let mut encoder = MozJpegEncoder::new_with_options(options);
+        let mut result = Vec::new();
+        encoder.encode(&img, &mut result)
+            .map_err(|e| ImageError::InvalidImage(format!("Failed to encode JPEG: {:?}", e)))?;
+        Ok(EmbeddedImage {
+            data: result,
+            mime_type: "image/jpeg".to_string(),
+        })
     }
 }
 
@@ -448,5 +743,60 @@ mod tests {
 
         let err = ImageError::InvalidImage("http://example.com".to_string());
         assert_eq!(err.to_string(), "Invalid image data: http://example.com");
+    }
+
+    #[test]
+    fn test_image_cache_local_not_cached() {
+        // Local images are NOT cached - they're read fresh each time
+        let temp_dir = TempDir::new().unwrap();
+        let image_path = temp_dir.path().join("test.png");
+
+        // Write a minimal PNG header
+        let mut file = std::fs::File::create(&image_path).unwrap();
+        file.write_all(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+            .unwrap();
+
+        let cache = ImageCache::new();
+
+        // First load
+        let result1 = cache.get_or_load("test.png", temp_dir.path(), EmbedMode::Local, false, None);
+        assert!(result1.is_ok());
+        let img1 = result1.unwrap().unwrap();
+        assert_eq!(img1.mime_type, "image/png");
+
+        // Delete the file - second load should FAIL (no caching for local files)
+        std::fs::remove_file(&image_path).unwrap();
+
+        let result2 = cache.get_or_load("test.png", temp_dir.path(), EmbedMode::Local, false, None);
+        assert!(result2.is_ok());
+        // Returns None because file not found (graceful mode)
+        assert!(result2.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_image_cache_embed_none() {
+        let cache = ImageCache::new();
+
+        // Load with EmbedMode::None returns None
+        let result = cache.get_or_load("test.png", Path::new("."), EmbedMode::None, false, None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_url_to_filename() {
+        let f1 = url_to_filename("https://example.com/image.png");
+        let f2 = url_to_filename("https://example.com/photo.jpg");
+
+        // Same URL produces same filename
+        let f3 = url_to_filename("https://example.com/image.png");
+        assert_eq!(f1, f3);
+
+        // Different URLs produce different filenames
+        assert_ne!(f1, f2);
+
+        // Filename is a 16-char hex hash
+        assert_eq!(f1.len(), 16);
+        assert!(f1.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

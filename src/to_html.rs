@@ -1,6 +1,7 @@
 use crate::EmbedMode;
+use crate::config::OptimizeConfig;
 use crate::highlight::HighlightContext;
-use crate::image::{ImageError, load_image_with_fallback};
+use crate::image::{ImageCache, ImageError};
 use markdown::mdast::{AlignKind, Node};
 use std::path::Path;
 use syntect::easy::HighlightLines;
@@ -12,12 +13,15 @@ pub fn mdast_to_html(
     embed_mode: EmbedMode,
     strict: bool,
     highlight: Option<&HighlightContext>,
+    image_cache: &ImageCache,
+    optimize: Option<&OptimizeConfig>,
 ) -> Result<String, ImageError> {
     let mut html = String::new();
-    node_to_html(node, &mut html, base_dir, embed_mode, strict, highlight)?;
+    node_to_html(node, &mut html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
     Ok(html)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn node_to_html(
     node: &Node,
     html: &mut String,
@@ -25,24 +29,26 @@ fn node_to_html(
     embed_mode: EmbedMode,
     strict: bool,
     highlight: Option<&HighlightContext>,
+    image_cache: &ImageCache,
+    optimize: Option<&OptimizeConfig>,
 ) -> Result<(), ImageError> {
     match node {
         Node::Root(root) => {
             for child in &root.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
             }
         }
         Node::Heading(heading) => {
             html.push_str(&format!("<h{}>", heading.depth));
             for child in &heading.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
             }
             html.push_str(&format!("</h{}>\n", heading.depth));
         }
         Node::Paragraph(para) => {
             html.push_str("<p>");
             for child in &para.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
             }
             html.push_str("</p>\n");
         }
@@ -52,14 +58,14 @@ fn node_to_html(
         Node::Strong(strong) => {
             html.push_str("<strong>");
             for child in &strong.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
             }
             html.push_str("</strong>");
         }
         Node::Emphasis(em) => {
             html.push_str("<em>");
             for child in &em.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
             }
             html.push_str("</em>");
         }
@@ -132,12 +138,12 @@ fn node_to_html(
         Node::Link(link) => {
             html.push_str(&format!("<a href=\"{}\">", html_escape(&link.url)));
             for child in &link.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
             }
             html.push_str("</a>");
         }
         Node::Image(image) => {
-            let img = load_image_with_fallback(&image.url, base_dir, embed_mode, strict)?;
+            let img = image_cache.get_or_load(&image.url, base_dir, embed_mode, strict, optimize)?;
             let src = img
                 .map(|i| i.to_data_url())
                 .unwrap_or_else(|| image.url.clone());
@@ -164,20 +170,20 @@ fn node_to_html(
                         if let Some(Node::Paragraph(para)) = item.children.first() {
                             for para_child in &para.children {
                                 node_to_html(
-                                    para_child, html, base_dir, embed_mode, strict, highlight,
+                                    para_child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize,
                                 )?;
                             }
                         } else {
                             for item_child in &item.children {
                                 node_to_html(
-                                    item_child, html, base_dir, embed_mode, strict, highlight,
+                                    item_child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize,
                                 )?;
                             }
                         }
                     } else {
                         for item_child in &item.children {
                             node_to_html(
-                                item_child, html, base_dir, embed_mode, strict, highlight,
+                                item_child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize,
                             )?;
                         }
                     }
@@ -192,7 +198,7 @@ fn node_to_html(
         Node::Blockquote(bq) => {
             html.push_str("<blockquote>\n");
             for child in &bq.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
             }
             html.push_str("</blockquote>\n");
         }
@@ -205,7 +211,7 @@ fn node_to_html(
         Node::Delete(del) => {
             html.push_str("<del>");
             for child in &del.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
             }
             html.push_str("</del>");
         }
@@ -222,6 +228,8 @@ fn node_to_html(
                     embed_mode,
                     strict,
                     highlight,
+                    image_cache,
+                    optimize,
                 )?;
             }
             html.push_str("</thead>\n<tbody>\n");
@@ -235,6 +243,8 @@ fn node_to_html(
                     embed_mode,
                     strict,
                     highlight,
+                    image_cache,
+                    optimize,
                 )?;
             }
             html.push_str("</tbody>\n</table>\n");
@@ -257,6 +267,8 @@ fn render_table_row(
     embed_mode: EmbedMode,
     strict: bool,
     highlight: Option<&HighlightContext>,
+    image_cache: &ImageCache,
+    optimize: Option<&OptimizeConfig>,
 ) -> Result<(), ImageError> {
     if let Node::TableRow(row) = node {
         html.push_str("<tr>\n");
@@ -272,7 +284,7 @@ fn render_table_row(
             html.push_str(&format!("<{}{} nowrap>", tag, align_attr));
             if let Node::TableCell(cell) = cell {
                 for child in &cell.children {
-                    node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                    node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
                 }
             }
             html.push_str(&format!("</{}>\n", tag));
@@ -307,7 +319,8 @@ mod tests {
 
     fn render_html(md: &str) -> String {
         let ast = parse_markdown(md);
-        mdast_to_html(&ast, Path::new("."), crate::EmbedMode::None, false, None).unwrap()
+        let cache = crate::image::ImageCache::new();
+        mdast_to_html(&ast, Path::new("."), crate::EmbedMode::None, false, None, &cache, None).unwrap()
     }
 
     #[test]
