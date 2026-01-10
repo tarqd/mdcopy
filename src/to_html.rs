@@ -3,7 +3,8 @@ use crate::highlight::HighlightContext;
 use crate::image::{ImageError, load_image_with_fallback};
 use markdown::mdast::{AlignKind, Node};
 use std::path::Path;
-use syntect::html::highlighted_html_for_string;
+use syntect::easy::HighlightLines;
+use syntect::util::LinesWithEndings;
 
 pub fn mdast_to_html(
     node: &Node,
@@ -75,18 +76,49 @@ fn node_to_html(
                     .map(|lang| ctx.find_syntax(lang))
                     .unwrap_or_else(|| ctx.syntax_set.find_syntax_plain_text());
 
-                match highlighted_html_for_string(&code.value, &ctx.syntax_set, syntax, &ctx.theme)
-                {
-                    Ok(highlighted) => {
-                        html.push_str(&highlighted);
+                // Get background color from theme
+                let bg_color = ctx
+                    .theme
+                    .settings
+                    .background
+                    .map(|c| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b))
+                    .unwrap_or_else(|| "#2b303b".to_string());
+
+                // Use a div with inline styles for better paste compatibility
+                html.push_str(&format!(
+                    "<div style=\"background-color:{}; padding:16px; font-family:monospace,monospace; font-size:14px; white-space:pre; border-radius:8px;\">",
+                    bg_color
+                ));
+
+                let mut highlighter = HighlightLines::new(syntax, &ctx.theme);
+                let lines: Vec<&str> = LinesWithEndings::from(&code.value).collect();
+                for (i, line) in lines.iter().enumerate() {
+                    if let Ok(ranges) = highlighter.highlight_line(line, &ctx.syntax_set) {
+                        for (style, text) in ranges {
+                            // Skip rendering the trailing newline character
+                            let text = text.trim_end_matches('\n');
+                            if text.is_empty() {
+                                continue;
+                            }
+                            let color = format!(
+                                "#{:02x}{:02x}{:02x}",
+                                style.foreground.r, style.foreground.g, style.foreground.b
+                            );
+                            html.push_str(&format!(
+                                "<span style=\"color:{}\">{}</span>",
+                                color,
+                                html_escape(text)
+                            ));
+                        }
+                    } else {
+                        html.push_str(&html_escape(line.trim_end_matches('\n')));
                     }
-                    Err(_) => {
-                        // Fall back to plain code block
-                        html.push_str("<pre><code>");
-                        html.push_str(&html_escape(&code.value));
-                        html.push_str("</code></pre>\n");
+                    if i < lines.len() - 1 {
+                        html.push_str("<br>");
                     }
                 }
+
+                html.push_str("</div>\n");
             } else {
                 html.push_str("<pre><code");
                 if let Some(lang) = &code.lang {
@@ -121,26 +153,41 @@ fn node_to_html(
             ));
         }
         Node::List(list) => {
-            if list.ordered {
-                html.push_str("<ol>\n");
-            } else {
-                html.push_str("<ul>\n");
-            }
+            let tag = if list.ordered { "ol" } else { "ul" };
+            html.push_str(&format!("<{}>\n", tag));
             for child in &list.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
+                if let Node::ListItem(item) = child {
+                    html.push_str("<li>");
+                    // For tight lists with single paragraph, unwrap the paragraph
+                    // to avoid extra spacing from <p> margins
+                    if !list.spread && item.children.len() == 1 {
+                        if let Some(Node::Paragraph(para)) = item.children.first() {
+                            for para_child in &para.children {
+                                node_to_html(
+                                    para_child, html, base_dir, embed_mode, strict, highlight,
+                                )?;
+                            }
+                        } else {
+                            for item_child in &item.children {
+                                node_to_html(
+                                    item_child, html, base_dir, embed_mode, strict, highlight,
+                                )?;
+                            }
+                        }
+                    } else {
+                        for item_child in &item.children {
+                            node_to_html(
+                                item_child, html, base_dir, embed_mode, strict, highlight,
+                            )?;
+                        }
+                    }
+                    html.push_str("</li>\n");
+                }
             }
-            if list.ordered {
-                html.push_str("</ol>\n");
-            } else {
-                html.push_str("</ul>\n");
-            }
+            html.push_str(&format!("</{}>\n", tag));
         }
-        Node::ListItem(item) => {
-            html.push_str("<li>");
-            for child in &item.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
-            }
-            html.push_str("</li>\n");
+        Node::ListItem(_) => {
+            // ListItem is handled inline in List for tight/loose list support
         }
         Node::Blockquote(bq) => {
             html.push_str("<blockquote>\n");
@@ -163,7 +210,8 @@ fn node_to_html(
             html.push_str("</del>");
         }
         Node::Table(table) => {
-            html.push_str("<table>\n<thead>\n");
+            // Use old-school HTML attributes for email/paste compatibility
+            html.push_str("<table border=\"0\" cellpadding=\"8\" cellspacing=\"0\">\n<thead>\n");
             if let Some(first_row) = table.children.first() {
                 render_table_row(
                     first_row,
@@ -220,7 +268,8 @@ fn render_table_row(
                 Some(AlignKind::Right) => " align=\"right\"",
                 _ => "",
             };
-            html.push_str(&format!("<{}{}>", tag, align_attr));
+            // Use nowrap attribute (deprecated but widely supported) for paste compatibility
+            html.push_str(&format!("<{}{} nowrap>", tag, align_attr));
             if let Node::TableCell(cell) = cell {
                 for child in &cell.children {
                     node_to_html(child, html, base_dir, embed_mode, strict, highlight)?;
@@ -397,11 +446,11 @@ mod tests {
     fn test_table() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
         let html = render_html(md);
-        assert!(html.contains("<table>"));
+        assert!(html.contains("<table"));
         assert!(html.contains("<thead>"));
         assert!(html.contains("<tbody>"));
-        assert!(html.contains("<th>"));
-        assert!(html.contains("<td>"));
+        assert!(html.contains("<th"));
+        assert!(html.contains("<td"));
         assert!(html.contains("</table>"));
     }
 

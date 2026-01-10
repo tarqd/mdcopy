@@ -24,6 +24,85 @@ pub enum EmbedMode {
     None,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardFormat {
+    Html,
+    Rtf,
+    Markdown,
+}
+
+fn parse_formats(s: &str) -> Result<Vec<ClipboardFormat>, String> {
+    let mut formats = Vec::new();
+    for part in s.split(',') {
+        match part.trim().to_lowercase().as_str() {
+            "html" => formats.push(ClipboardFormat::Html),
+            "rtf" => formats.push(ClipboardFormat::Rtf),
+            "markdown" | "md" => formats.push(ClipboardFormat::Markdown),
+            other => return Err(format!("Unknown format: {}", other)),
+        }
+    }
+    if formats.is_empty() {
+        return Err("At least one format must be specified".to_string());
+    }
+    Ok(formats)
+}
+
+/// Embed images in markdown text by replacing image URLs with data URLs
+fn embed_images_in_markdown(
+    markdown: &str,
+    base_dir: &std::path::Path,
+    embed_mode: EmbedMode,
+    strict: bool,
+) -> Result<String, image::ImageError> {
+    use image::{load_image_with_fallback, is_data_url};
+
+    let mut result = String::with_capacity(markdown.len());
+    let mut remaining = markdown;
+
+    // Simple regex-like pattern matching for ![alt](url)
+    while let Some(start) = remaining.find("![") {
+        result.push_str(&remaining[..start]);
+        remaining = &remaining[start..];
+
+        // Find the ]( part
+        if let Some(bracket_end) = remaining.find("](") {
+            let alt_text = &remaining[2..bracket_end];
+            let after_paren = &remaining[bracket_end + 2..];
+
+            // Find closing )
+            if let Some(url_end) = after_paren.find(')') {
+                let url = &after_paren[..url_end];
+
+                // Try to embed the image
+                let new_url = if is_data_url(url) {
+                    url.to_string()
+                } else {
+                    match load_image_with_fallback(url, base_dir, embed_mode, strict)? {
+                        Some(img) => img.to_data_url(),
+                        None => url.to_string(),
+                    }
+                };
+
+                result.push_str("![");
+                result.push_str(alt_text);
+                result.push_str("](");
+                result.push_str(&new_url);
+                result.push(')');
+
+                remaining = &after_paren[url_end + 1..];
+                continue;
+            }
+        }
+
+        // Couldn't parse as image, just copy the ![ and continue
+        result.push_str("![");
+        remaining = &remaining[2..];
+    }
+
+    result.push_str(remaining);
+    Ok(result)
+}
+
 #[derive(Parser)]
 #[command(name = "mdcopy")]
 #[command(about = "Convert markdown to clipboard with text, HTML, and RTF formats")]
@@ -79,6 +158,10 @@ struct Args {
     /// Suppress all output except errors
     #[arg(short, long)]
     quiet: bool,
+
+    /// Clipboard formats to include (comma-separated: html,rtf,markdown)
+    #[arg(short, long, default_value = "html,rtf")]
+    format: String,
 }
 
 fn init_logger(verbose: u8, quiet: bool) {
@@ -194,48 +277,96 @@ fn main() -> io::Result<()> {
     let ast = markdown::to_mdast(&markdown_text, &options.parse).expect("Failed to parse markdown");
     debug!("Parsed markdown AST");
 
-    let html_output = to_html::mdast_to_html(
-        &ast,
-        &base_dir,
-        cfg.embed,
-        cfg.strict,
-        highlight_ctx.as_ref(),
-    )
-    .map_err(io::Error::other)?;
-    let rtf_output = to_rtf::mdast_to_rtf(
-        &ast,
-        &base_dir,
-        cfg.embed,
-        cfg.strict,
-        highlight_ctx.as_ref(),
-    )
-    .map_err(io::Error::other)?;
-    info!(
-        "Generated HTML ({} bytes) and RTF ({} bytes)",
-        html_output.len(),
-        rtf_output.len()
+    let formats = parse_formats(&args.format).expect("Invalid format specification");
+
+    // Only generate outputs for requested formats
+    let html_output = if formats.contains(&ClipboardFormat::Html) || cfg.output.is_some() {
+        Some(
+            to_html::mdast_to_html(
+                &ast,
+                &base_dir,
+                cfg.embed,
+                cfg.strict,
+                highlight_ctx.as_ref(),
+            )
+            .map_err(io::Error::other)?,
+        )
+    } else {
+        None
+    };
+
+    let rtf_output = if formats.contains(&ClipboardFormat::Rtf) {
+        Some(
+            to_rtf::mdast_to_rtf(
+                &ast,
+                &base_dir,
+                cfg.embed,
+                cfg.strict,
+                highlight_ctx.as_ref(),
+            )
+            .map_err(io::Error::other)?,
+        )
+    } else {
+        None
+    };
+
+    let markdown_output = if formats.contains(&ClipboardFormat::Markdown) {
+        Some(embed_images_in_markdown(&markdown_text, &base_dir, cfg.embed, cfg.strict).map_err(io::Error::other)?)
+    } else {
+        None
+    };
+
+    debug!(
+        "Generated: HTML={}, RTF={}, Markdown={}",
+        html_output.as_ref().map(|s| s.len()).unwrap_or(0),
+        rtf_output.as_ref().map(|s| s.len()).unwrap_or(0),
+        markdown_output.as_ref().map(|s| s.len()).unwrap_or(0),
     );
 
     match cfg.output {
         Some(path) if path.as_os_str() == "-" => {
             debug!("Writing HTML to stdout");
-            io::stdout().write_all(html_output.as_bytes())?;
+            let output = html_output.as_ref().expect("HTML output required for stdout");
+            io::stdout().write_all(output.as_bytes())?;
         }
         Some(path) => {
             debug!("Writing HTML to {:?}", path);
-            fs::write(&path, &html_output)?;
+            let output = html_output.as_ref().expect("HTML output required for file");
+            fs::write(&path, output)?;
             info!("Wrote output to {:?}", path);
         }
         None => {
             debug!("Writing to clipboard");
             let ctx = ClipboardContext::new().expect("Failed to create clipboard context");
-            ctx.set(vec![
-                ClipboardContent::Text(markdown_text),
-                ClipboardContent::Html(html_output),
-                ClipboardContent::Rtf(rtf_output),
-            ])
-            .expect("Failed to set clipboard content");
-            info!("Copied to clipboard (text, HTML, RTF)");
+
+            let mut contents = Vec::new();
+
+            // Always include plain text (original markdown) as fallback
+            contents.push(ClipboardContent::Text(markdown_text));
+
+            if let Some(html) = html_output {
+                contents.push(ClipboardContent::Html(html));
+            }
+            if let Some(rtf) = rtf_output {
+                contents.push(ClipboardContent::Rtf(rtf));
+            }
+            if let Some(md) = markdown_output {
+                // Markdown with embedded images goes as text if no plain text yet
+                // But we already have plain text, so this replaces it
+                contents[0] = ClipboardContent::Text(md);
+            }
+
+            let format_names: Vec<&str> = formats
+                .iter()
+                .map(|f| match f {
+                    ClipboardFormat::Html => "HTML",
+                    ClipboardFormat::Rtf => "RTF",
+                    ClipboardFormat::Markdown => "Markdown",
+                })
+                .collect();
+
+            ctx.set(contents).expect("Failed to set clipboard content");
+            info!("Copied to clipboard ({})", format_names.join(", "));
         }
     }
 
