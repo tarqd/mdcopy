@@ -54,7 +54,7 @@ fn embed_images_in_markdown(
     embed_mode: EmbedMode,
     strict: bool,
 ) -> Result<String, image::ImageError> {
-    use image::{load_image_with_fallback, is_data_url};
+    use image::{is_data_url, load_image_with_fallback};
 
     let mut result = String::with_capacity(markdown.len());
     let mut remaining = markdown;
@@ -311,7 +311,10 @@ fn main() -> io::Result<()> {
     };
 
     let markdown_output = if formats.contains(&ClipboardFormat::Markdown) {
-        Some(embed_images_in_markdown(&markdown_text, &base_dir, cfg.embed, cfg.strict).map_err(io::Error::other)?)
+        Some(
+            embed_images_in_markdown(&markdown_text, &base_dir, cfg.embed, cfg.strict)
+                .map_err(io::Error::other)?,
+        )
     } else {
         None
     };
@@ -326,7 +329,9 @@ fn main() -> io::Result<()> {
     match cfg.output {
         Some(path) if path.as_os_str() == "-" => {
             debug!("Writing HTML to stdout");
-            let output = html_output.as_ref().expect("HTML output required for stdout");
+            let output = html_output
+                .as_ref()
+                .expect("HTML output required for stdout");
             io::stdout().write_all(output.as_bytes())?;
         }
         Some(path) => {
