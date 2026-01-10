@@ -1,6 +1,17 @@
 # Changelog
 
-## [0.2.0] - 2025-01-09
+## [0.2.1] - 2026-01-09
+
+### Added
+- `--version` / `-V` flag to display version
+- macOS config fallback: checks `~/.config/mdcopy/` if `~/Library/Application Support/mdcopy/` doesn't exist (respects `$XDG_CONFIG_HOME`)
+
+### Changed
+- `--format` flag is now context-aware:
+  - File output (`-o`): defaults to HTML, only accepts single format
+  - Clipboard output: defaults to HTML+RTF, accepts multiple formats
+
+## [0.2.0] - 2026-01-09
 
 ### Added
 - `--format` / `-f` flag to select clipboard formats (html, rtf, markdown)
