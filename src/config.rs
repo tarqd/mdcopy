@@ -92,14 +92,49 @@ fn default_language_mappings() -> HashMap<String, String> {
     m
 }
 
+/// Get the XDG config directory ($XDG_CONFIG_HOME or ~/.config)
+fn xdg_config_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| dirs::home_dir().map(|p| p.join(".config")))
+}
+
 /// Get the default config file path
+/// On macOS, checks ~/Library/Application Support/mdcopy/ first, then $XDG_CONFIG_HOME/mdcopy/
 pub fn default_config_path() -> Option<PathBuf> {
-    dirs::config_local_dir().map(|p| p.join("mdcopy").join("config.toml"))
+    default_config_dir().map(|p| p.join("config.toml"))
 }
 
 /// Get the default config directory
+/// On macOS, checks ~/Library/Application Support/mdcopy/ first, then $XDG_CONFIG_HOME/mdcopy/
 pub fn default_config_dir() -> Option<PathBuf> {
-    dirs::config_local_dir().map(|p| p.join("mdcopy"))
+    // Primary location (platform standard)
+    let primary = dirs::config_local_dir().map(|p| p.join("mdcopy"));
+
+    // On macOS, fall back to XDG config dir if primary doesn't exist
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(ref primary_path) = primary {
+            if primary_path.exists() {
+                return primary;
+            }
+        }
+        // Check XDG-style fallback
+        let fallback = xdg_config_dir().map(|p| p.join("mdcopy"));
+        if let Some(ref fallback_path) = fallback {
+            if fallback_path.exists() {
+                return fallback;
+            }
+        }
+        // Neither exists, return primary (will be created there if needed)
+        primary
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        primary
+    }
 }
 
 /// Load configuration from a TOML file
