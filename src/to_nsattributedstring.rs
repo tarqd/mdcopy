@@ -15,12 +15,17 @@
 //!
 //! ### TODO:
 //! - [ ] Font attributes (bold, italic, monospace) using NSFont and NSFontDescriptor
-//! - [ ] NSTextAttachment for images (https://developer.apple.com/documentation/appkit/nstextattachment)
+//! - [x] ~~NSTextAttachment for images~~ **DONE!** (https://developer.apple.com/documentation/appkit/nstextattachment)
 //! - [ ] NSTextTable for markdown tables (https://developer.apple.com/documentation/appkit/nstexttable)
 //! - [ ] Paragraph styles for headings, blockquotes, lists
 //! - [ ] Code blocks with background color
 //! - [ ] Links as NSURL attributes
 //! - [ ] Strikethrough formatting
+//!
+//! ### Implemented Features:
+//! - **Image embedding** ✅: Both local and remote images are loaded via NSImage and embedded
+//!   as NSTextAttachment objects using `setImage()` and `attributedStringWithAttachment()`.
+//!   Images render inline when pasted into TextEdit, Notes, Mail, Pages, etc.
 //!
 //! ### References:
 //! - NSAttributedString: https://developer.apple.com/documentation/foundation/nsattributedstring
@@ -41,6 +46,7 @@ use objc2_foundation::{
 };
 use objc2_app_kit::{
     NSPasteboard, NSTextAttachment, NSImage,
+    NSAttributedStringAttachmentConveniences,
 };
 
 /// Convert markdown AST to NSMutableAttributedString
@@ -224,18 +230,21 @@ fn embed_image(
     if let Some(ns_image) = ns_image {
         // Create NSTextAttachment with the image
         let attachment = NSTextAttachment::new();
-        // TODO: Set the image on the attachment
-        // This requires the correct method binding in objc2-app-kit
-        // attachment.setImage(&ns_image);
 
-        // TODO: Create attributed string from attachment
-        // let attachment_string = NSAttributedString::attributedStringWithAttachment(&attachment);
-        // attr_string.appendAttributedString(&attachment_string);
+        // Set the image on the attachment (macOS 10.11+)
+        unsafe {
+            attachment.setImage(Some(&ns_image));
+        }
 
-        debug!("Image loaded successfully: {} (NSTextAttachment creation pending API bindings)", url);
+        // Create attributed string from attachment
+        let attachment_string = unsafe {
+            NSAttributedString::attributedStringWithAttachment(&attachment)
+        };
 
-        // Temporary: Insert placeholder text until we have the full API
-        append_text(attr_string, &format!("[Image: {}]", alt));
+        // Append to the main attributed string
+        attr_string.appendAttributedString(&attachment_string);
+
+        debug!("Image embedded successfully: {}", url);
     } else {
         warn!("Failed to load image: {}", url);
         // Fallback: insert alt text with URL
