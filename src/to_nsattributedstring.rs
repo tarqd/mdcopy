@@ -15,23 +15,28 @@
 //!
 //! ### TODO:
 //! - [x] ~~Bold formatting~~ **DONE!**
-//! - [ ] Italic formatting (requires NSFontDescriptor with symbolic traits - complex, low priority)
 //! - [x] ~~Headings~~ **DONE!**
 //! - [x] ~~NSTextAttachment for images~~ **DONE!**
 //! - [x] ~~Monospace font for inline code~~ **DONE!**
 //! - [x] ~~Links~~ **DONE!**
 //! - [x] ~~Strikethrough formatting~~ **DONE!**
-//! - [ ] NSTextTable for markdown tables
-//! - [ ] Paragraph styles for blockquotes, lists
-//! - [ ] Code blocks with background color and monospace font
+//! - [x] ~~Code blocks with background color~~ **DONE!**
+//! - [x] ~~Lists (basic bullet points)~~ **DONE!**
+//! - [x] ~~Blockquotes (gray text)~~ **DONE!**
+//! - [ ] Italic formatting (requires NSFontDescriptor with symbolic traits - complex, low priority)
+//! - [ ] NSTextTable for markdown tables (complex, would require significant NSTextTable API work)
+//! - [ ] Advanced paragraph styles (indentation, spacing)
 //!
 //! ### Implemented Features:
 //! - **Image embedding** ✅: Both local and remote images via NSTextAttachment
 //! - **Bold text** ✅: Using `NSFont::boldSystemFontOfSize()`
 //! - **Headings** ✅: Scaled fonts (H1=2x, H2=1.5x, H3=1.17x) with bold weight
 //! - **Inline code** ✅: Monospaced font via `NSFont::monospacedSystemFontOfSize_weight()`
+//! - **Code blocks** ✅: Monospace font + light gray background (RGB: 0.95, 0.95, 0.95)
 //! - **Links** ✅: Clickable links using `NSLinkAttributeName`
 //! - **Strikethrough** ✅: Using `NSStrikethroughStyleAttributeName`
+//! - **Lists** ✅: Bullet points (• character) for unordered lists
+//! - **Blockquotes** ✅: Gray text color (RGB: 0.5, 0.5, 0.5)
 //!
 //! ### References:
 //! - NSAttributedString: https://developer.apple.com/documentation/foundation/nsattributedstring
@@ -53,10 +58,11 @@ use objc2_foundation::{
     NSAttributedStringKey, NSNumber,
 };
 use objc2_app_kit::{
-    NSPasteboard, NSTextAttachment, NSImage, NSFont,
+    NSPasteboard, NSTextAttachment, NSImage, NSFont, NSColor,
     NSAttributedStringAttachmentConveniences,
     NSFontAttributeName, NSParagraphStyleAttributeName,
     NSLinkAttributeName, NSStrikethroughStyleAttributeName,
+    NSBackgroundColorAttributeName, NSForegroundColorAttributeName,
 };
 
 /// Convert markdown AST to NSMutableAttributedString
@@ -187,9 +193,37 @@ fn node_to_attributed_string(
             let range = NSRange::new(start_len, attr_string.length() - start_len);
             apply_strikethrough(attr_string, range);
         }
-        // TODO: Implement remaining node types (lists, blockquotes, code blocks, tables)
+        Node::Code(code) => {
+            let start_len = attr_string.length();
+            append_text(attr_string, &code.value);
+            append_text(attr_string, "\n");
+            let range = NSRange::new(start_len, attr_string.length() - start_len);
+            apply_code_block(attr_string, range);
+        }
+        Node::List(list) => {
+            for child in &list.children {
+                node_to_attributed_string(child, attr_string, ctx)?;
+            }
+            append_text(attr_string, "\n");
+        }
+        Node::ListItem(item) => {
+            // Add bullet point or number
+            append_text(attr_string, "• ");
+            for child in &item.children {
+                node_to_attributed_string(child, attr_string, ctx)?;
+            }
+        }
+        Node::BlockQuote(quote) => {
+            let start_len = attr_string.length();
+            for child in &quote.children {
+                node_to_attributed_string(child, attr_string, ctx)?;
+            }
+            let range = NSRange::new(start_len, attr_string.length() - start_len);
+            apply_blockquote(attr_string, range);
+        }
+        // TODO: Implement tables (NSTextTable is complex)
         _ => {
-            warn!("Unhandled node type in NSAttributedString conversion");
+            warn!("Unhandled node type in NSAttributedString conversion: {:?}", std::any::type_name_of_val(node));
         }
     }
     Ok(())
@@ -355,6 +389,69 @@ fn apply_strikethrough(attr_string: &NSMutableAttributedString, range: NSRange) 
     }
 }
 
+/// Apply code block formatting to a range
+///
+/// Uses monospace font and light gray background color for code blocks.
+fn apply_code_block(attr_string: &NSMutableAttributedString, range: NSRange) {
+    unsafe {
+        // Get current or default font size
+        let current_font = attr_string.attribute_atIndex_effectiveRange(
+            NSFontAttributeName,
+            range.location,
+            None,
+        );
+
+        let font_size = if let Some(font_obj) = current_font {
+            if let Some(current_font) = font_obj.downcast_ref::<NSFont>() {
+                current_font.pointSize()
+            } else {
+                NSFont::systemFontSize()
+            }
+        } else {
+            NSFont::systemFontSize()
+        };
+
+        // Apply monospace font
+        let mono_font = NSFont::monospacedSystemFontOfSize_weight(
+            font_size,
+            0.0, // Regular weight
+        );
+        attr_string.addAttribute_value_range(
+            NSFontAttributeName,
+            &mono_font as &AnyObject,
+            range,
+        );
+
+        // Apply light gray background color (RGB: 0.95, 0.95, 0.95)
+        let bg_color = NSColor::colorWithRed_green_blue_alpha(0.95, 0.95, 0.95, 1.0);
+        attr_string.addAttribute_value_range(
+            NSBackgroundColorAttributeName,
+            &bg_color as &AnyObject,
+            range,
+        );
+    }
+}
+
+/// Apply blockquote formatting to a range
+///
+/// This is a simplified implementation. Ideally would use NSParagraphStyle
+/// with leftIndent, but for now we just add a visual indicator.
+fn apply_blockquote(attr_string: &NSMutableAttributedString, range: NSRange) {
+    // For now, just a placeholder. Proper implementation would use:
+    // - NSParagraphStyle with leftIndent
+    // - Possibly a border/bar on the left (harder in attributed strings)
+    // - Different text color (gray)
+    unsafe {
+        // Apply gray color to blockquotes
+        let gray_color = NSColor::colorWithRed_green_blue_alpha(0.5, 0.5, 0.5, 1.0);
+        attr_string.addAttribute_value_range(
+            NSForegroundColorAttributeName,
+            &gray_color as &AnyObject,
+            range,
+        );
+    }
+}
+
 /// Embed an image as NSTextAttachment
 ///
 /// Attempts to load the image using NSImage (which handles all formats natively),
@@ -480,6 +577,27 @@ mod tests {
     #[test]
     fn test_mixed_formatting() {
         let ast = parse_markdown("**bold** and `code` and [link](url) and ~~strike~~");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_code_block() {
+        let ast = parse_markdown("```rust\nfn main() {}\n```");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_list() {
+        let ast = parse_markdown("- Item 1\n- Item 2\n- Item 3");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_blockquote() {
+        let ast = parse_markdown("> This is a quote\n> with multiple lines");
         let result = mdast_to_nsattributed_string(&ast, Path::new("."));
         assert!(result.is_ok());
     }
