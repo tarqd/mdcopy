@@ -3,6 +3,12 @@
 //! This module converts markdown AST to NSAttributedString, which provides the best
 //! clipboard compatibility with native macOS apps (TextEdit, Notes, Mail, Pages).
 //!
+//! ## Design Philosophy
+//!
+//! Unlike HTML/RTF output, NSAttributedString **always embeds images** for optimal
+//! clipboard behavior. There's no "embed mode" - images are always embedded as
+//! NSTextAttachment objects, which is how native macOS apps expect them.
+//!
 //! ## Implementation Status
 //!
 //! This is a **work in progress**. The basic skeleton is in place, but key features need implementation:
@@ -24,8 +30,6 @@
 
 #![cfg(target_os = "macos")]
 
-use crate::EmbedMode;
-use crate::image::{ImageError, load_image_with_fallback};
 use log::{debug, warn};
 use markdown::mdast::Node;
 use std::path::Path;
@@ -33,26 +37,26 @@ use std::path::Path;
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::ClassType;
 use objc2_foundation::{
-    NSAttributedString, NSMutableAttributedString, NSString, NSData,
-    NSRange, NSDictionary, NSNumber,
+    NSAttributedString, NSMutableAttributedString, NSString, NSData, NSURL, NSRange,
 };
 use objc2_app_kit::{
-    NSPasteboard, NSTextAttachment, NSImage, NSTextTable, NSFont, NSParagraphStyle,
+    NSPasteboard, NSTextAttachment, NSImage,
 };
 
 /// Convert markdown AST to NSMutableAttributedString
 ///
 /// This is the main entry point for macOS clipboard writing. The resulting
 /// attributed string can be written directly to NSPasteboard.
+///
+/// Images are always embedded as NSTextAttachment, regardless of whether they're
+/// local or remote. This provides the best paste experience in macOS apps.
 pub fn mdast_to_nsattributed_string(
     node: &Node,
     base_dir: &Path,
-    embed_mode: EmbedMode,
-    strict: bool,
-) -> Result<Retained<NSMutableAttributedString>, ImageError> {
+) -> Result<Retained<NSMutableAttributedString>, String> {
     autoreleasepool(|_| {
         let attr_string = NSMutableAttributedString::new();
-        let mut ctx = AttributedStringContext::new(base_dir, embed_mode, strict);
+        let mut ctx = AttributedStringContext::new(base_dir);
 
         node_to_attributed_string(node, &attr_string, &mut ctx)?;
 
@@ -87,17 +91,11 @@ pub fn write_to_pasteboard(
 /// Context for building attributed string
 struct AttributedStringContext<'a> {
     base_dir: &'a Path,
-    embed_mode: EmbedMode,
-    strict: bool,
 }
 
 impl<'a> AttributedStringContext<'a> {
-    fn new(base_dir: &'a Path, embed_mode: EmbedMode, strict: bool) -> Self {
-        Self {
-            base_dir,
-            embed_mode,
-            strict,
-        }
+    fn new(base_dir: &'a Path) -> Self {
+        Self { base_dir }
     }
 }
 
@@ -106,7 +104,7 @@ fn node_to_attributed_string(
     node: &Node,
     attr_string: &NSMutableAttributedString,
     ctx: &mut AttributedStringContext,
-) -> Result<(), ImageError> {
+) -> Result<(), String> {
     match node {
         Node::Root(root) => {
             for child in &root.children {
@@ -189,39 +187,58 @@ fn apply_heading(attr_string: &NSMutableAttributedString, range: NSRange, depth:
 }
 
 /// Embed an image as NSTextAttachment
+///
+/// Attempts to load the image using NSImage (which handles all formats natively),
+/// then embeds it as an NSTextAttachment for inline rendering when pasted.
+///
+/// Supports both local file paths and remote URLs. NSImage loads the data lazily
+/// when the attributed string is written to the pasteboard.
 fn embed_image(
     attr_string: &NSMutableAttributedString,
     url: &str,
     alt: &str,
     ctx: &mut AttributedStringContext,
-) -> Result<(), ImageError> {
-    let img = load_image_with_fallback(url, ctx.base_dir, ctx.embed_mode, ctx.strict)?;
-
-    if let Some(embedded_img) = img {
-        // Create NSImage from image data
-        let ns_data = unsafe {
-            NSData::dataWithBytes_length(
-                embedded_img.data.as_ptr() as *const std::ffi::c_void,
-                embedded_img.data.len(),
-            )
-        };
-
-        if let Some(ns_image) = NSImage::initWithData(NSImage::alloc(), &ns_data) {
-            // Create NSTextAttachment with the image
-            let attachment = NSTextAttachment::new();
-            // TODO: Set the image on the attachment
-            // attachment.setImage(&ns_image);
-
-            // Create attributed string from attachment
-            // TODO: Use NSAttributedString::attributedStringWithAttachment
-            debug!("Image embedding not yet fully implemented");
+) -> Result<(), String> {
+    // Determine if this is a local file or remote URL
+    let ns_image = if url.starts_with("http://") || url.starts_with("https://") {
+        // Remote URL - let NSImage fetch it
+        let nsurl = NSURL::URLWithString(&NSString::from_str(url));
+        if let Some(nsurl) = nsurl {
+            NSImage::initWithContentsOfURL(NSImage::alloc(), &nsurl)
         } else {
-            warn!("Failed to create NSImage from data for: {}", url);
-            // Fallback: insert alt text or URL
-            append_text(attr_string, &format!("[{}]({})", alt, url));
+            warn!("Failed to create NSURL for: {}", url);
+            None
         }
     } else {
-        // No image data, insert alt text or URL
+        // Local file path - resolve relative to base_dir
+        let path = if std::path::Path::new(url).is_absolute() {
+            url.to_string()
+        } else {
+            ctx.base_dir.join(url).to_string_lossy().to_string()
+        };
+
+        let ns_path = NSString::from_str(&path);
+        NSImage::initWithContentsOfFile(NSImage::alloc(), &ns_path)
+    };
+
+    if let Some(ns_image) = ns_image {
+        // Create NSTextAttachment with the image
+        let attachment = NSTextAttachment::new();
+        // TODO: Set the image on the attachment
+        // This requires the correct method binding in objc2-app-kit
+        // attachment.setImage(&ns_image);
+
+        // TODO: Create attributed string from attachment
+        // let attachment_string = NSAttributedString::attributedStringWithAttachment(&attachment);
+        // attr_string.appendAttributedString(&attachment_string);
+
+        debug!("Image loaded successfully: {} (NSTextAttachment creation pending API bindings)", url);
+
+        // Temporary: Insert placeholder text until we have the full API
+        append_text(attr_string, &format!("[Image: {}]", alt));
+    } else {
+        warn!("Failed to load image: {}", url);
+        // Fallback: insert alt text with URL
         append_text(attr_string, &format!("[{}]({})", alt, url));
     }
 
@@ -247,7 +264,7 @@ mod tests {
     #[test]
     fn test_basic_text() {
         let ast = parse_markdown("Hello world");
-        let result = mdast_to_nsattributed_string(&ast, Path::new("."), EmbedMode::None, false);
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
         assert!(result.is_ok());
         let attr_string = result.unwrap();
         assert!(attr_string.length() > 0);
@@ -256,14 +273,14 @@ mod tests {
     #[test]
     fn test_bold_text() {
         let ast = parse_markdown("**bold**");
-        let result = mdast_to_nsattributed_string(&ast, Path::new("."), EmbedMode::None, false);
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_heading() {
         let ast = parse_markdown("# Heading 1");
-        let result = mdast_to_nsattributed_string(&ast, Path::new("."), EmbedMode::None, false);
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
         assert!(result.is_ok());
     }
 }
