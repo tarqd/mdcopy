@@ -2,10 +2,7 @@
 
 A CLI tool that converts Markdown to clipboard with multiple formats (plain text, HTML, and RTF), enabling rich-text pasting into applications like email clients, word processors, and note-taking apps.
 
-<picture>
-  <source srcset="assets/recording.avif" type="image/avif">
-  <img src="assets/recording.gif" alt="mdcopy demo">
-</picture>
+![mdcopy screenshot](assets/screenshot.png)
 
 ## Why mdcopy?
 
