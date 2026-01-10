@@ -149,6 +149,9 @@ jobs:
           # Generate formula from template
           envsubst < Formula/mdcopy.rb.template > mdcopy.rb
 
+          # Configure git to use gh for authentication
+          gh auth setup-git
+
           # Clone tap using gh (handles auth securely via GH_TOKEN)
           gh repo clone tarqd/homebrew-tap tap
           cd tap
