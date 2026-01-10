@@ -2,6 +2,7 @@ mod config;
 mod highlight;
 mod image;
 mod to_html;
+mod to_markdown;
 mod to_rtf;
 
 use clap::{Parser, ValueEnum};
@@ -45,62 +46,6 @@ fn parse_formats(s: &str) -> Result<Vec<ClipboardFormat>, String> {
         return Err("At least one format must be specified".to_string());
     }
     Ok(formats)
-}
-
-/// Embed images in markdown text by replacing image URLs with data URLs
-fn embed_images_in_markdown(
-    markdown: &str,
-    base_dir: &std::path::Path,
-    embed_mode: EmbedMode,
-    strict: bool,
-) -> Result<String, image::ImageError> {
-    use image::{is_data_url, load_image_with_fallback};
-
-    let mut result = String::with_capacity(markdown.len());
-    let mut remaining = markdown;
-
-    // Simple regex-like pattern matching for ![alt](url)
-    while let Some(start) = remaining.find("![") {
-        result.push_str(&remaining[..start]);
-        remaining = &remaining[start..];
-
-        // Find the ]( part
-        if let Some(bracket_end) = remaining.find("](") {
-            let alt_text = &remaining[2..bracket_end];
-            let after_paren = &remaining[bracket_end + 2..];
-
-            // Find closing )
-            if let Some(url_end) = after_paren.find(')') {
-                let url = &after_paren[..url_end];
-
-                // Try to embed the image
-                let new_url = if is_data_url(url) {
-                    url.to_string()
-                } else {
-                    match load_image_with_fallback(url, base_dir, embed_mode, strict)? {
-                        Some(img) => img.to_data_url(),
-                        None => url.to_string(),
-                    }
-                };
-
-                result.push_str("![");
-                result.push_str(alt_text);
-                result.push_str("](");
-                result.push_str(&new_url);
-                result.push(')');
-
-                remaining = &after_paren[url_end + 1..];
-                continue;
-            }
-        }
-
-        // Couldn't parse as image, just copy the ![ and continue
-        result.push_str("![");
-        remaining = &remaining[2..];
-    }
-
-    result.push_str(remaining);
-    Ok(result)
 }
 
 #[derive(Parser)]
@@ -329,7 +274,7 @@ fn main() -> io::Result<()> {
 
     let markdown_output = if formats.contains(&ClipboardFormat::Markdown) {
         Some(
-            embed_images_in_markdown(&markdown_text, &base_dir, cfg.embed, cfg.strict)
+            to_markdown::mdast_to_markdown(&ast, &base_dir, cfg.embed, cfg.strict)
                 .map_err(io::Error::other)?,
         )
     } else {
