@@ -159,9 +159,9 @@ struct Args {
     #[arg(short, long)]
     quiet: bool,
 
-    /// Clipboard formats to include (comma-separated: html,rtf,markdown)
-    #[arg(short, long, default_value = "html,rtf")]
-    format: String,
+    /// Output format(s): html, rtf, markdown (comma-separated for clipboard, single for file output)
+    #[arg(short, long)]
+    format: Option<String>,
 }
 
 fn init_logger(verbose: u8, quiet: bool) {
@@ -277,10 +277,26 @@ fn main() -> io::Result<()> {
     let ast = markdown::to_mdast(&markdown_text, &options.parse).expect("Failed to parse markdown");
     debug!("Parsed markdown AST");
 
-    let formats = parse_formats(&args.format).expect("Invalid format specification");
+    // Determine formats based on output mode and explicit --format flag
+    let is_file_output = cfg.output.is_some();
+    let formats = match (&args.format, is_file_output) {
+        // Explicit format specified
+        (Some(fmt), true) => {
+            let parsed = parse_formats(fmt).expect("Invalid format specification");
+            if parsed.len() > 1 {
+                eprintln!("Error: File output only supports a single format");
+                std::process::exit(1);
+            }
+            parsed
+        }
+        (Some(fmt), false) => parse_formats(fmt).expect("Invalid format specification"),
+        // No format specified - use context-aware defaults
+        (None, true) => vec![ClipboardFormat::Html],
+        (None, false) => vec![ClipboardFormat::Html, ClipboardFormat::Rtf],
+    };
 
-    // Only generate outputs for requested formats
-    let html_output = if formats.contains(&ClipboardFormat::Html) || cfg.output.is_some() {
+    // Generate requested outputs
+    let html_output = if formats.contains(&ClipboardFormat::Html) {
         Some(
             to_html::mdast_to_html(
                 &ast,
@@ -327,18 +343,26 @@ fn main() -> io::Result<()> {
     );
 
     match cfg.output {
-        Some(path) if path.as_os_str() == "-" => {
-            debug!("Writing HTML to stdout");
-            let output = html_output
-                .as_ref()
-                .expect("HTML output required for stdout");
+        Some(ref path) if path.as_os_str() == "-" => {
+            let output = match formats[0] {
+                ClipboardFormat::Html => html_output.as_ref().expect("HTML output missing"),
+                ClipboardFormat::Rtf => rtf_output.as_ref().expect("RTF output missing"),
+                ClipboardFormat::Markdown => {
+                    markdown_output.as_ref().expect("Markdown output missing")
+                }
+            };
             io::stdout().write_all(output.as_bytes())?;
         }
-        Some(path) => {
-            debug!("Writing HTML to {:?}", path);
-            let output = html_output.as_ref().expect("HTML output required for file");
-            fs::write(&path, output)?;
-            info!("Wrote output to {:?}", path);
+        Some(ref path) => {
+            let output = match formats[0] {
+                ClipboardFormat::Html => html_output.as_ref().expect("HTML output missing"),
+                ClipboardFormat::Rtf => rtf_output.as_ref().expect("RTF output missing"),
+                ClipboardFormat::Markdown => {
+                    markdown_output.as_ref().expect("Markdown output missing")
+                }
+            };
+            fs::write(path, output)?;
+            info!("Wrote {:?} output to {:?}", formats[0], path);
         }
         None => {
             debug!("Writing to clipboard");
@@ -356,8 +380,7 @@ fn main() -> io::Result<()> {
                 contents.push(ClipboardContent::Rtf(rtf));
             }
             if let Some(md) = markdown_output {
-                // Markdown with embedded images goes as text if no plain text yet
-                // But we already have plain text, so this replaces it
+                // Markdown with embedded images replaces plain text
                 contents[0] = ClipboardContent::Text(md);
             }
 
