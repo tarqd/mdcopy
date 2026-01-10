@@ -115,17 +115,13 @@ pub fn default_config_dir() -> Option<PathBuf> {
     // On macOS, fall back to XDG config dir if primary doesn't exist
     #[cfg(target_os = "macos")]
     {
-        if let Some(ref primary_path) = primary {
-            if primary_path.exists() {
-                return primary;
-            }
+        if primary.as_ref().is_some_and(|p| p.exists()) {
+            return primary;
         }
         // Check XDG-style fallback
         let fallback = xdg_config_dir().map(|p| p.join("mdcopy"));
-        if let Some(ref fallback_path) = fallback {
-            if fallback_path.exists() {
-                return fallback;
-            }
+        if fallback.as_ref().is_some_and(|p| p.exists()) {
+            return fallback;
         }
         // Neither exists, return primary (will be created there if needed)
         primary
