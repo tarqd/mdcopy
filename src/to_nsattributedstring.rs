@@ -14,22 +14,24 @@
 //! This is a **work in progress**. The basic skeleton is in place, but key features need implementation:
 //!
 //! ### TODO:
-//! - [x] ~~Bold formatting~~ **DONE!** using `NSFont::boldSystemFontOfSize`
-//! - [ ] Italic formatting (requires NSFontDescriptor with symbolic traits - complex)
-//! - [x] ~~Headings~~ **DONE!** with size scaling (H1=2em, H2=1.5em, H3=1.17em)
+//! - [x] ~~Bold formatting~~ **DONE!**
+//! - [ ] Italic formatting (requires NSFontDescriptor with symbolic traits - complex, low priority)
+//! - [x] ~~Headings~~ **DONE!**
 //! - [x] ~~NSTextAttachment for images~~ **DONE!**
-//! - [ ] Monospace font for inline code
+//! - [x] ~~Monospace font for inline code~~ **DONE!**
+//! - [x] ~~Links~~ **DONE!**
+//! - [x] ~~Strikethrough formatting~~ **DONE!**
 //! - [ ] NSTextTable for markdown tables
 //! - [ ] Paragraph styles for blockquotes, lists
-//! - [ ] Code blocks with background color
-//! - [ ] Links as NSURL attributes
-//! - [ ] Strikethrough formatting
+//! - [ ] Code blocks with background color and monospace font
 //!
 //! ### Implemented Features:
-//! - **Image embedding** ✅: Both local and remote images are loaded via NSImage and embedded
-//!   as NSTextAttachment objects using `setImage()` and `attributedStringWithAttachment()`.
-//! - **Bold text** ✅: Using `NSFont::boldSystemFontOfSize()` with `addAttribute_value_range()`.
-//! - **Headings** ✅: Scaled fonts (H1=2x, H2=1.5x, H3=1.17x) with bold weight.
+//! - **Image embedding** ✅: Both local and remote images via NSTextAttachment
+//! - **Bold text** ✅: Using `NSFont::boldSystemFontOfSize()`
+//! - **Headings** ✅: Scaled fonts (H1=2x, H2=1.5x, H3=1.17x) with bold weight
+//! - **Inline code** ✅: Monospaced font via `NSFont::monospacedSystemFontOfSize_weight()`
+//! - **Links** ✅: Clickable links using `NSLinkAttributeName`
+//! - **Strikethrough** ✅: Using `NSStrikethroughStyleAttributeName`
 //!
 //! ### References:
 //! - NSAttributedString: https://developer.apple.com/documentation/foundation/nsattributedstring
@@ -48,12 +50,13 @@ use objc2::runtime::AnyObject;
 use objc2::ClassType;
 use objc2_foundation::{
     NSAttributedString, NSMutableAttributedString, NSString, NSData, NSURL, NSRange,
-    NSAttributedStringKey,
+    NSAttributedStringKey, NSNumber,
 };
 use objc2_app_kit::{
     NSPasteboard, NSTextAttachment, NSImage, NSFont,
     NSAttributedStringAttachmentConveniences,
     NSFontAttributeName, NSParagraphStyleAttributeName,
+    NSLinkAttributeName, NSStrikethroughStyleAttributeName,
 };
 
 /// Convert markdown AST to NSMutableAttributedString
@@ -162,7 +165,29 @@ fn node_to_attributed_string(
         Node::Image(image) => {
             embed_image(attr_string, &image.url, &image.alt, ctx)?;
         }
-        // TODO: Implement remaining node types
+        Node::InlineCode(code) => {
+            let start_len = attr_string.length();
+            append_text(attr_string, &code.value);
+            let range = NSRange::new(start_len, attr_string.length() - start_len);
+            apply_monospace(attr_string, range);
+        }
+        Node::Link(link) => {
+            let start_len = attr_string.length();
+            for child in &link.children {
+                node_to_attributed_string(child, attr_string, ctx)?;
+            }
+            let range = NSRange::new(start_len, attr_string.length() - start_len);
+            apply_link(attr_string, range, &link.url);
+        }
+        Node::Delete(del) => {
+            let start_len = attr_string.length();
+            for child in &del.children {
+                node_to_attributed_string(child, attr_string, ctx)?;
+            }
+            let range = NSRange::new(start_len, attr_string.length() - start_len);
+            apply_strikethrough(attr_string, range);
+        }
+        // TODO: Implement remaining node types (lists, blockquotes, code blocks, tables)
         _ => {
             warn!("Unhandled node type in NSAttributedString conversion");
         }
@@ -254,6 +279,77 @@ fn apply_heading(attr_string: &NSMutableAttributedString, range: NSRange, depth:
         attr_string.addAttribute_value_range(
             NSFontAttributeName,
             &heading_font as &AnyObject,
+            range,
+        );
+    }
+}
+
+/// Apply monospace font to a range (for inline code)
+///
+/// Uses the system's monospaced font at the current or default size.
+fn apply_monospace(attr_string: &NSMutableAttributedString, range: NSRange) {
+    unsafe {
+        // Get current font size or use system default
+        let current_font = attr_string.attribute_atIndex_effectiveRange(
+            NSFontAttributeName,
+            range.location,
+            None,
+        );
+
+        let font_size = if let Some(font_obj) = current_font {
+            if let Some(current_font) = font_obj.downcast_ref::<NSFont>() {
+                current_font.pointSize()
+            } else {
+                NSFont::systemFontSize()
+            }
+        } else {
+            NSFont::systemFontSize()
+        };
+
+        // Create monospaced font
+        let mono_font = NSFont::monospacedSystemFontOfSize_weight(
+            font_size,
+            0.0, // Regular weight (NSFontWeightRegular = 0.0)
+        );
+
+        // Apply the monospaced font to the range
+        attr_string.addAttribute_value_range(
+            NSFontAttributeName,
+            &mono_font as &AnyObject,
+            range,
+        );
+    }
+}
+
+/// Apply link formatting to a range
+///
+/// Sets the NSLinkAttributeName to make the text clickable when pasted.
+/// macOS apps will render this as a blue underlined link.
+fn apply_link(attr_string: &NSMutableAttributedString, range: NSRange, url: &str) {
+    unsafe {
+        let ns_url_string = NSString::from_str(url);
+
+        // Apply the link attribute
+        attr_string.addAttribute_value_range(
+            NSLinkAttributeName,
+            &ns_url_string as &AnyObject,
+            range,
+        );
+    }
+}
+
+/// Apply strikethrough formatting to a range
+///
+/// Uses NSStrikethroughStyleAttributeName with single line style.
+fn apply_strikethrough(attr_string: &NSMutableAttributedString, range: NSRange) {
+    unsafe {
+        // NSUnderlineStyleSingle = 1
+        let style = objc2_foundation::NSNumber::numberWithInt(1);
+
+        // Apply strikethrough style
+        attr_string.addAttribute_value_range(
+            NSStrikethroughStyleAttributeName,
+            &style as &AnyObject,
             range,
         );
     }
@@ -356,6 +452,34 @@ mod tests {
     #[test]
     fn test_heading() {
         let ast = parse_markdown("# Heading 1");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_inline_code() {
+        let ast = parse_markdown("`code`");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_link() {
+        let ast = parse_markdown("[example](https://example.com)");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_strikethrough() {
+        let ast = parse_markdown("~~deleted~~");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_mixed_formatting() {
+        let ast = parse_markdown("**bold** and `code` and [link](url) and ~~strike~~");
         let result = mdast_to_nsattributed_string(&ast, Path::new("."));
         assert!(result.is_ok());
     }
