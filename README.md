@@ -110,7 +110,9 @@ This allows pasting into virtually any application with appropriate formatting.
 
 ## Configuration
 
-mdcopy supports a TOML configuration file at `~/.config/mdcopy/config.toml` (or `~/Library/Application Support/mdcopy/config.toml` on macOS).
+mdcopy looks for a TOML configuration file at:
+- **Linux**: `$XDG_CONFIG_HOME/mdcopy/config.toml` (default: `~/.config/mdcopy/config.toml`)
+- **macOS**: `~/Library/Application Support/mdcopy/config.toml`, with fallback to `~/.config/mdcopy/config.toml` if the Application Support directory doesn't exist
 
 Configuration precedence: CLI arguments > environment variables > config file > defaults
 
