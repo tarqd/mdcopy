@@ -14,10 +14,13 @@
 //! This is a **work in progress**. The basic skeleton is in place, but key features need implementation:
 //!
 //! ### TODO:
-//! - [ ] Font attributes (bold, italic, monospace) using NSFont and NSFontDescriptor
-//! - [x] ~~NSTextAttachment for images~~ **DONE!** (https://developer.apple.com/documentation/appkit/nstextattachment)
-//! - [ ] NSTextTable for markdown tables (https://developer.apple.com/documentation/appkit/nstexttable)
-//! - [ ] Paragraph styles for headings, blockquotes, lists
+//! - [x] ~~Bold formatting~~ **DONE!** using `NSFont::boldSystemFontOfSize`
+//! - [ ] Italic formatting (requires NSFontDescriptor with symbolic traits - complex)
+//! - [x] ~~Headings~~ **DONE!** with size scaling (H1=2em, H2=1.5em, H3=1.17em)
+//! - [x] ~~NSTextAttachment for images~~ **DONE!**
+//! - [ ] Monospace font for inline code
+//! - [ ] NSTextTable for markdown tables
+//! - [ ] Paragraph styles for blockquotes, lists
 //! - [ ] Code blocks with background color
 //! - [ ] Links as NSURL attributes
 //! - [ ] Strikethrough formatting
@@ -25,7 +28,8 @@
 //! ### Implemented Features:
 //! - **Image embedding** ✅: Both local and remote images are loaded via NSImage and embedded
 //!   as NSTextAttachment objects using `setImage()` and `attributedStringWithAttachment()`.
-//!   Images render inline when pasted into TextEdit, Notes, Mail, Pages, etc.
+//! - **Bold text** ✅: Using `NSFont::boldSystemFontOfSize()` with `addAttribute_value_range()`.
+//! - **Headings** ✅: Scaled fonts (H1=2x, H2=1.5x, H3=1.17x) with bold weight.
 //!
 //! ### References:
 //! - NSAttributedString: https://developer.apple.com/documentation/foundation/nsattributedstring
@@ -40,13 +44,16 @@ use markdown::mdast::Node;
 use std::path::Path;
 
 use objc2::rc::{Retained, autoreleasepool};
+use objc2::runtime::AnyObject;
 use objc2::ClassType;
 use objc2_foundation::{
     NSAttributedString, NSMutableAttributedString, NSString, NSData, NSURL, NSRange,
+    NSAttributedStringKey,
 };
 use objc2_app_kit::{
-    NSPasteboard, NSTextAttachment, NSImage,
+    NSPasteboard, NSTextAttachment, NSImage, NSFont,
     NSAttributedStringAttachmentConveniences,
+    NSFontAttributeName, NSParagraphStyleAttributeName,
 };
 
 /// Convert markdown AST to NSMutableAttributedString
@@ -175,21 +182,81 @@ fn append_text(attr_string: &NSMutableAttributedString, text: &str) {
 
 /// Apply bold formatting to a range
 fn apply_bold(attr_string: &NSMutableAttributedString, range: NSRange) {
-    // TODO: Implement font traits for bold
-    // This requires NSFontDescriptor and NSFontManager
-    debug!("apply_bold not yet implemented");
+    unsafe {
+        // Get the current font or use system font
+        let current_font = attr_string.attribute_atIndex_effectiveRange(
+            NSFontAttributeName,
+            range.location,
+            None,
+        );
+
+        let font_size = if let Some(font_obj) = current_font {
+            // Try to get the current font and its size
+            if let Some(current_font) = font_obj.downcast_ref::<NSFont>() {
+                current_font.pointSize()
+            } else {
+                NSFont::systemFontSize()
+            }
+        } else {
+            NSFont::systemFontSize()
+        };
+
+        // Create bold font
+        let bold_font = NSFont::boldSystemFontOfSize(font_size);
+
+        // Apply the bold font to the range
+        attr_string.addAttribute_value_range(
+            NSFontAttributeName,
+            &bold_font as &AnyObject,
+            range,
+        );
+    }
 }
 
 /// Apply italic formatting to a range
+///
+/// Note: True italic requires NSFontDescriptor with symbolic traits,
+/// which is complex. For now, we'll log that it's not implemented.
+/// Most paste destinations handle this via HTML/RTF fallback.
 fn apply_italic(attr_string: &NSMutableAttributedString, range: NSRange) {
-    // TODO: Implement font traits for italic
-    debug!("apply_italic not yet implemented");
+    // TODO: Implement italic using NSFontDescriptor with NSFontSymbolicTraits
+    // This requires:
+    // 1. Get current font
+    // 2. Get its font descriptor
+    // 3. Create new descriptor with italic trait added
+    // 4. Create font from descriptor
+    // 5. Apply to range
+    debug!("apply_italic not yet implemented (requires NSFontDescriptor with traits)");
 }
 
 /// Apply heading formatting to a range
+///
+/// Headings use larger font sizes:
+/// - H1: 2x base size
+/// - H2: 1.5x base size
+/// - H3: 1.17x base size
+/// - H4-H6: base size (bold via markdown strong)
 fn apply_heading(attr_string: &NSMutableAttributedString, range: NSRange, depth: u8) {
-    // TODO: Implement font size changes for headings
-    debug!("apply_heading not yet implemented for depth {}", depth);
+    unsafe {
+        let base_size = NSFont::systemFontSize();
+
+        let heading_size = match depth {
+            1 => base_size * 2.0,    // H1: 2em
+            2 => base_size * 1.5,    // H2: 1.5em
+            3 => base_size * 1.17,   // H3: 1.17em
+            _ => base_size,          // H4-H6: 1em
+        };
+
+        // Use bold font for headings
+        let heading_font = NSFont::boldSystemFontOfSize(heading_size);
+
+        // Apply the heading font to the range
+        attr_string.addAttribute_value_range(
+            NSFontAttributeName,
+            &heading_font as &AnyObject,
+            range,
+        );
+    }
 }
 
 /// Embed an image as NSTextAttachment
