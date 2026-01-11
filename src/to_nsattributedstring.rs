@@ -234,8 +234,7 @@ fn node_to_attributed_string(
 /// Append plain text to attributed string
 fn append_text(attr_string: &NSMutableAttributedString, text: &str) {
     let ns_string = NSString::from_str(text);
-    let append_string =
-        NSAttributedString::initWithString(NSAttributedString::alloc(), &ns_string);
+    let append_string = NSAttributedString::initWithString(NSAttributedString::alloc(), &ns_string);
     attr_string.appendAttributedString(&append_string);
 }
 
