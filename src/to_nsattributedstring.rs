@@ -146,61 +146,68 @@ fn node_to_attributed_string(
             append_text(attr_string, &text.value);
         }
         Node::Strong(strong) => {
-            let start_len = attr_string.length();
+            let temp_string = NSMutableAttributedString::new();
             for child in &strong.children {
-                node_to_attributed_string(child, attr_string, ctx)?;
+                node_to_attributed_string(child, &temp_string, ctx)?;
             }
-            let range = NSRange::new(start_len, attr_string.length() - start_len);
-            apply_bold(attr_string, range);
+            let range = NSRange::new(0, temp_string.length());
+            apply_bold(&temp_string, range);
+            attr_string.appendAttributedString(&temp_string);
         }
         Node::Emphasis(em) => {
-            let start_len = attr_string.length();
+            let temp_string = NSMutableAttributedString::new();
             for child in &em.children {
-                node_to_attributed_string(child, attr_string, ctx)?;
+                node_to_attributed_string(child, &temp_string, ctx)?;
             }
-            let range = NSRange::new(start_len, attr_string.length() - start_len);
-            apply_italic(attr_string, range);
+            let range = NSRange::new(0, temp_string.length());
+            apply_italic(&temp_string, range);
+            attr_string.appendAttributedString(&temp_string);
         }
         Node::Heading(heading) => {
-            let start_len = attr_string.length();
+            let temp_string = NSMutableAttributedString::new();
             for child in &heading.children {
-                node_to_attributed_string(child, attr_string, ctx)?;
+                node_to_attributed_string(child, &temp_string, ctx)?;
             }
-            let range = NSRange::new(start_len, attr_string.length() - start_len);
-            apply_heading(attr_string, range, heading.depth);
+            let range = NSRange::new(0, temp_string.length());
+            apply_heading(&temp_string, range, heading.depth);
+            attr_string.appendAttributedString(&temp_string);
             append_text(attr_string, "\n\n");
         }
         Node::Image(image) => {
             embed_image(attr_string, &image.url, &image.alt, ctx)?;
         }
         Node::InlineCode(code) => {
-            let start_len = attr_string.length();
-            append_text(attr_string, &code.value);
-            let range = NSRange::new(start_len, attr_string.length() - start_len);
-            apply_monospace(attr_string, range);
+            let temp_string = NSMutableAttributedString::new();
+            append_text(&temp_string, &code.value);
+            let range = NSRange::new(0, temp_string.length());
+            apply_monospace(&temp_string, range);
+            attr_string.appendAttributedString(&temp_string);
         }
         Node::Link(link) => {
-            let start_len = attr_string.length();
+            let temp_string = NSMutableAttributedString::new();
             for child in &link.children {
-                node_to_attributed_string(child, attr_string, ctx)?;
+                node_to_attributed_string(child, &temp_string, ctx)?;
             }
-            let range = NSRange::new(start_len, attr_string.length() - start_len);
-            apply_link(attr_string, range, &link.url);
+            let range = NSRange::new(0, temp_string.length());
+            apply_link(&temp_string, range, &link.url);
+            attr_string.appendAttributedString(&temp_string);
         }
         Node::Delete(del) => {
-            let start_len = attr_string.length();
+            let temp_string = NSMutableAttributedString::new();
             for child in &del.children {
-                node_to_attributed_string(child, attr_string, ctx)?;
+                node_to_attributed_string(child, &temp_string, ctx)?;
             }
-            let range = NSRange::new(start_len, attr_string.length() - start_len);
-            apply_strikethrough(attr_string, range);
+            let range = NSRange::new(0, temp_string.length());
+            apply_strikethrough(&temp_string, range);
+            attr_string.appendAttributedString(&temp_string);
         }
         Node::Code(code) => {
-            let start_len = attr_string.length();
-            append_text(attr_string, &code.value);
-            append_text(attr_string, "\n");
-            let range = NSRange::new(start_len, attr_string.length() - start_len);
-            apply_code_block(attr_string, range);
+            let temp_string = NSMutableAttributedString::new();
+            append_text(&temp_string, &code.value);
+            append_text(&temp_string, "\n");
+            let range = NSRange::new(0, temp_string.length());
+            apply_code_block(&temp_string, range);
+            attr_string.appendAttributedString(&temp_string);
         }
         Node::List(list) => {
             for child in &list.children {
@@ -216,12 +223,13 @@ fn node_to_attributed_string(
             }
         }
         Node::Blockquote(quote) => {
-            let start_len = attr_string.length();
+            let temp_string = NSMutableAttributedString::new();
             for child in &quote.children {
-                node_to_attributed_string(child, attr_string, ctx)?;
+                node_to_attributed_string(child, &temp_string, ctx)?;
             }
-            let range = NSRange::new(start_len, attr_string.length() - start_len);
-            apply_blockquote(attr_string, range);
+            let range = NSRange::new(0, temp_string.length());
+            apply_blockquote(&temp_string, range);
+            attr_string.appendAttributedString(&temp_string);
         }
         Node::Table(table) => {
             render_table(attr_string, table, ctx)?;
