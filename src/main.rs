@@ -7,7 +7,7 @@ mod to_rtf;
 
 use clap::{Parser, ValueEnum};
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
-use config::{CliArgs, CliHighlightArgs, CliOptimizeArgs, Config, default_config_dir};
+use config::{CliArgs, CliHighlightArgs, CliImageArgs, Config, default_config_dir};
 use log::{LevelFilter, debug, info};
 use markdown::{Constructs, Options, ParseOptions};
 use std::fs;
@@ -65,10 +65,6 @@ struct Args {
     #[arg(short, long)]
     root: Option<PathBuf>,
 
-    /// Image embedding mode [possible values: all, local, none]
-    #[arg(short, long, value_enum)]
-    embed: Option<EmbedMode>,
-
     /// Fail on errors instead of falling back gracefully
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     strict: Option<bool>,
@@ -89,6 +85,26 @@ struct Args {
     #[arg(long = "highlight-syntaxes-dir")]
     highlight_syntaxes_dir: Option<PathBuf>,
 
+    /// Image embedding mode shorthand [possible values: all, local, none]
+    #[arg(short, long, value_enum)]
+    embed: Option<EmbedMode>,
+
+    /// Embed local images (default: true)
+    #[arg(long, overrides_with = "no_embed_local")]
+    embed_local: bool,
+
+    /// Don't embed local images
+    #[arg(long, overrides_with = "embed_local")]
+    no_embed_local: bool,
+
+    /// Embed remote images (default: false)
+    #[arg(long, overrides_with = "no_embed_remote")]
+    embed_remote: bool,
+
+    /// Don't embed remote images
+    #[arg(long, overrides_with = "embed_remote")]
+    no_embed_remote: bool,
+
     /// Enable image optimization (default: true)
     #[arg(long, overrides_with = "no_optimize")]
     optimize: bool,
@@ -98,12 +114,12 @@ struct Args {
     no_optimize: bool,
 
     /// Max image dimension in pixels (default: 1200)
-    #[arg(long = "optimize-max-dimension")]
-    optimize_max_dimension: Option<u32>,
+    #[arg(long)]
+    max_dimension: Option<u32>,
 
     /// Image quality 1-100 (default: 80)
-    #[arg(long = "optimize-quality")]
-    optimize_quality: Option<u8>,
+    #[arg(long)]
+    quality: Option<u8>,
 
     /// Path to configuration file
     #[arg(short, long)]
@@ -188,11 +204,30 @@ fn main() -> io::Result<()> {
     }
 
     // Build configuration from CLI args, env vars, and config file
+    // -e/--embed is a shorthand that sets both embed_local and embed_remote
+    let (embed_local_from_shorthand, embed_remote_from_shorthand) = match args.embed {
+        Some(EmbedMode::All) => (Some(true), Some(true)),
+        Some(EmbedMode::Local) => (Some(true), Some(false)),
+        Some(EmbedMode::None) => (Some(false), Some(false)),
+        None => (None, None),
+    };
+
+    // Explicit flags override the shorthand
+    let embed_local = match (args.embed_local, args.no_embed_local) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => embed_local_from_shorthand,
+    };
+    let embed_remote = match (args.embed_remote, args.no_embed_remote) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => embed_remote_from_shorthand,
+    };
+
     let cli_args = CliArgs {
         input: args.input,
         output: args.output.clone(),
         root: args.root,
-        embed: args.embed,
         strict: args.strict,
         highlight: CliHighlightArgs {
             enable: args.highlight,
@@ -200,14 +235,16 @@ fn main() -> io::Result<()> {
             themes_dir: args.highlight_themes_dir,
             syntaxes_dir: args.highlight_syntaxes_dir,
         },
-        optimize: CliOptimizeArgs {
-            enable: match (args.optimize, args.no_optimize) {
+        image: CliImageArgs {
+            embed_local,
+            embed_remote,
+            optimize: match (args.optimize, args.no_optimize) {
                 (true, false) => Some(true),
                 (false, true) => Some(false),
-                _ => None, // Neither or both (last wins via overrides_with, but both false = neither)
+                _ => None,
             },
-            max_dimension: args.optimize_max_dimension,
-            quality: args.optimize_quality,
+            max_dimension: args.max_dimension,
+            quality: args.quality,
         },
     };
 
@@ -215,13 +252,16 @@ fn main() -> io::Result<()> {
 
     let effective_theme = cfg.highlight.effective_theme();
     debug!("Input: {:?}", cfg.input);
-    debug!("Embed mode: {:?}", cfg.embed);
     debug!("Strict mode: {}", cfg.strict);
     debug!("Syntax highlighting: {}", cfg.highlight.enable);
     debug!("Theme: {}", effective_theme);
     debug!(
-        "Image optimization: {} (max_dim={}, quality={})",
-        cfg.optimize.enabled, cfg.optimize.max_dimension, cfg.optimize.quality
+        "Image: embed_local={}, embed_remote={}, optimize={} (max_dim={}, quality={})",
+        cfg.image.embed_local,
+        cfg.image.embed_remote,
+        cfg.image.optimize,
+        cfg.image.max_dimension,
+        cfg.image.quality
     );
 
     let highlight_ctx = if !cfg.highlight.enable {
@@ -273,24 +313,16 @@ fn main() -> io::Result<()> {
     // Create shared image cache to avoid duplicate loads across formats
     let image_cache = image::ImageCache::new();
 
-    // Prepare optimize config
-    let optimize = if cfg.optimize.enabled {
-        Some(&cfg.optimize)
-    } else {
-        None
-    };
-
     // Generate requested outputs
     let html_output = if formats.contains(&ClipboardFormat::Html) {
         Some(
             to_html::mdast_to_html(
                 &ast,
                 &base_dir,
-                cfg.embed,
+                &cfg.image,
                 cfg.strict,
                 highlight_ctx.as_ref(),
                 &image_cache,
-                optimize,
             )
             .map_err(io::Error::other)?,
         )
@@ -303,11 +335,10 @@ fn main() -> io::Result<()> {
             to_rtf::mdast_to_rtf(
                 &ast,
                 &base_dir,
-                cfg.embed,
+                &cfg.image,
                 cfg.strict,
                 highlight_ctx.as_ref(),
                 &image_cache,
-                optimize,
             )
             .map_err(io::Error::other)?,
         )
@@ -317,7 +348,7 @@ fn main() -> io::Result<()> {
 
     let markdown_output = if formats.contains(&ClipboardFormat::Markdown) {
         Some(
-            to_markdown::mdast_to_markdown(&ast, &base_dir, cfg.embed, cfg.strict, &image_cache, optimize)
+            to_markdown::mdast_to_markdown(&ast, &base_dir, &cfg.image, cfg.strict, &image_cache)
                 .map_err(io::Error::other)?,
         )
     } else {

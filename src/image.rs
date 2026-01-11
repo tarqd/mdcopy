@@ -1,5 +1,4 @@
-use crate::EmbedMode;
-use crate::config::OptimizeConfig;
+use crate::config::ImageConfig;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use log::{debug, trace, warn};
 use rimage::codecs::mozjpeg::{MozJpegEncoder, MozJpegOptions};
@@ -59,10 +58,11 @@ pub fn is_data_url(url: &str) -> bool {
 pub fn load_image(
     url: &str,
     base_dir: &Path,
-    embed_mode: EmbedMode,
+    image_config: &ImageConfig,
 ) -> Result<Option<EmbeddedImage>, ImageError> {
-    if embed_mode == EmbedMode::None {
-        trace!("Skipping image (embed mode: none): {}", url);
+    // Skip if embedding is completely disabled
+    if !image_config.embed_local && !image_config.embed_remote {
+        trace!("Skipping image (embed disabled): {}", url);
         return Ok(None);
     }
 
@@ -72,15 +72,20 @@ pub fn load_image(
     }
 
     if is_remote_url(url) {
-        if embed_mode == EmbedMode::All {
+        if image_config.embed_remote {
             debug!("Fetching remote image: {}", url);
             return fetch_remote_image(url).map(Some);
         }
-        trace!("Skipping remote image (embed mode: local): {}", url);
+        trace!("Skipping remote image (embed_remote: false): {}", url);
         return Ok(None);
     }
 
     // Local/relative URL
+    if !image_config.embed_local {
+        trace!("Skipping local image (embed_local: false): {}", url);
+        return Ok(None);
+    }
+
     let path = base_dir.join(url);
     debug!("Loading local image: {:?}", path);
 
@@ -207,10 +212,10 @@ impl EmbeddedImage {
 pub fn load_image_with_fallback(
     url: &str,
     base_dir: &Path,
-    embed_mode: EmbedMode,
+    image_config: &ImageConfig,
     fail_on_error: bool,
 ) -> Result<Option<EmbeddedImage>, ImageError> {
-    match load_image(url, base_dir, embed_mode) {
+    match load_image(url, base_dir, image_config) {
         Ok(img) => Ok(img),
         Err(e) => {
             if fail_on_error {
@@ -251,17 +256,21 @@ impl ImageCache {
         &self,
         url: &str,
         base_dir: &Path,
-        embed_mode: EmbedMode,
+        image_config: &ImageConfig,
         strict: bool,
-        optimize: Option<&OptimizeConfig>,
     ) -> Result<Option<EmbeddedImage>, ImageError> {
-        // Skip if embedding is disabled or it's a data URL
-        if embed_mode == EmbedMode::None || is_data_url(url) {
-            return load_image_with_fallback(url, base_dir, embed_mode, strict);
+        // Skip if embedding is completely disabled or it's a data URL
+        if (!image_config.embed_local && !image_config.embed_remote) || is_data_url(url) {
+            return load_image_with_fallback(url, base_dir, image_config, strict);
         }
 
-        // Remote images in local-only mode: skip
-        if is_remote_url(url) && embed_mode != EmbedMode::All {
+        // Remote images when embed_remote is false: skip
+        if is_remote_url(url) && !image_config.embed_remote {
+            return Ok(None);
+        }
+
+        // Local images when embed_local is false: skip
+        if !is_remote_url(url) && !image_config.embed_local {
             return Ok(None);
         }
 
@@ -278,23 +287,21 @@ impl ImageCache {
         let original = if is_remote_url(url) {
             self.fetch_remote(url, strict)?
         } else {
-            load_image_with_fallback(url, base_dir, embed_mode, strict)?
+            load_image_with_fallback(url, base_dir, image_config, strict)?
         };
 
         // If optimization enabled, optimize and cache
         // If no optimization but remote, we already cached the download
-        match (optimize.filter(|c| c.enabled), original) {
-            (Some(config), Some(img)) => self.optimize_and_cache(url, &img, config, strict),
-            (_, original) => Ok(original),
+        if image_config.optimize
+            && let Some(ref img) = original
+        {
+            return self.optimize_and_cache(url, img, image_config, strict);
         }
+        Ok(original)
     }
 
     /// Fetch a remote image, caching the raw download
-    fn fetch_remote(
-        &self,
-        url: &str,
-        strict: bool,
-    ) -> Result<Option<EmbeddedImage>, ImageError> {
+    fn fetch_remote(&self, url: &str, strict: bool) -> Result<Option<EmbeddedImage>, ImageError> {
         let temp_dir = match &self.temp_dir {
             Some(dir) => dir.path(),
             None => {
@@ -335,10 +342,10 @@ impl ImageCache {
         &self,
         source: &str,
         img: &EmbeddedImage,
-        config: &OptimizeConfig,
+        image_config: &ImageConfig,
         strict: bool,
     ) -> Result<Option<EmbeddedImage>, ImageError> {
-        match optimize_image(&img.data, config) {
+        match optimize_image(&img.data, image_config) {
             Ok(optimized) => {
                 trace!(
                     "Optimized image: {} -> {} bytes",
@@ -416,7 +423,8 @@ fn fetch_and_save_remote_image(url: &str, dest: &Path) -> Result<(), ImageError>
         return Err(ImageError::InvalidImage(url));
     }
 
-    fs::write(dest, &data).map_err(|e| ImageError::ReadFailed(dest.display().to_string(), e.to_string()))?;
+    fs::write(dest, &data)
+        .map_err(|e| ImageError::ReadFailed(dest.display().to_string(), e.to_string()))?;
 
     trace!("Cached remote image to {:?}", dest);
     Ok(())
@@ -441,7 +449,7 @@ fn load_cached_image(path: &Path) -> Result<Option<EmbeddedImage>, ImageError> {
 /// Returns JPEG for opaque images, PNG for images with transparency.
 pub fn optimize_image(
     data: &[u8],
-    config: &OptimizeConfig,
+    image_config: &ImageConfig,
 ) -> Result<EmbeddedImage, ImageError> {
     // Decode image using BufReader<Cursor> which implements BufRead + Seek
     let reader = BufReader::new(Cursor::new(data));
@@ -450,11 +458,11 @@ pub fn optimize_image(
 
     // Get dimensions
     let (width, height) = img.dimensions();
-    let max_dim = config.max_dimension as usize;
+    let max_dim = image_config.max_dimension as usize;
 
     debug!(
         "Optimizing image: {}x{}, max_dim={}, quality={}",
-        width, height, max_dim, config.quality
+        width, height, max_dim, image_config.quality
     );
 
     // Resize if needed (maintain aspect ratio)
@@ -463,10 +471,18 @@ pub fn optimize_image(
         let new_width = (width as f32 * scale) as usize;
         let new_height = (height as f32 * scale) as usize;
 
-        debug!("Resizing from {}x{} to {}x{}", width, height, new_width, new_height);
+        debug!(
+            "Resizing from {}x{} to {}x{}",
+            width, height, new_width, new_height
+        );
 
-        let resize = Resize::new(new_width, new_height, ResizeAlg::Convolution(FilterType::Lanczos3));
-        resize.execute_impl(&mut img)
+        let resize = Resize::new(
+            new_width,
+            new_height,
+            ResizeAlg::Convolution(FilterType::Lanczos3),
+        );
+        resize
+            .execute_impl(&mut img)
             .map_err(|e| ImageError::InvalidImage(format!("Failed to resize image: {:?}", e)))?;
     }
 
@@ -482,7 +498,8 @@ pub fn optimize_image(
         debug!("Encoding as PNG (has alpha channel)");
         let mut encoder = OxiPngEncoder::new();
         let mut result = Vec::new();
-        encoder.encode(&img, &mut result)
+        encoder
+            .encode(&img, &mut result)
             .map_err(|e| ImageError::InvalidImage(format!("Failed to encode PNG: {:?}", e)))?;
         Ok(EmbeddedImage {
             data: result,
@@ -490,14 +507,18 @@ pub fn optimize_image(
         })
     } else {
         // JPEG for opaque (better compression)
-        debug!("Encoding as JPEG (opaque, quality={})", config.quality);
+        debug!(
+            "Encoding as JPEG (opaque, quality={})",
+            image_config.quality
+        );
         let options = MozJpegOptions {
-            quality: config.quality as f32,
+            quality: image_config.quality as f32,
             ..Default::default()
         };
         let mut encoder = MozJpegEncoder::new_with_options(options);
         let mut result = Vec::new();
-        encoder.encode(&img, &mut result)
+        encoder
+            .encode(&img, &mut result)
             .map_err(|e| ImageError::InvalidImage(format!("Failed to encode JPEG: {:?}", e)))?;
         Ok(EmbeddedImage {
             data: result,
@@ -511,6 +532,37 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::TempDir;
+
+    // Helper to create ImageConfig for tests
+    fn config_embed_local() -> ImageConfig {
+        ImageConfig {
+            embed_local: true,
+            embed_remote: false,
+            optimize: false,
+            max_dimension: 1200,
+            quality: 80,
+        }
+    }
+
+    fn config_embed_all() -> ImageConfig {
+        ImageConfig {
+            embed_local: true,
+            embed_remote: true,
+            optimize: false,
+            max_dimension: 1200,
+            quality: 80,
+        }
+    }
+
+    fn config_embed_none() -> ImageConfig {
+        ImageConfig {
+            embed_local: false,
+            embed_remote: false,
+            optimize: false,
+            max_dimension: 1200,
+            quality: 80,
+        }
+    }
 
     #[test]
     fn test_is_remote_url() {
@@ -652,14 +704,18 @@ mod tests {
 
     #[test]
     fn test_load_image_embed_none() {
-        let result = load_image("image.png", Path::new("."), EmbedMode::None);
+        let result = load_image("image.png", Path::new("."), &config_embed_none());
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
     #[test]
     fn test_load_image_data_url_skipped() {
-        let result = load_image("data:image/png;base64,abc", Path::new("."), EmbedMode::All);
+        let result = load_image(
+            "data:image/png;base64,abc",
+            Path::new("."),
+            &config_embed_all(),
+        );
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -669,7 +725,7 @@ mod tests {
         let result = load_image(
             "https://example.com/image.png",
             Path::new("."),
-            EmbedMode::Local,
+            &config_embed_local(),
         );
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
@@ -685,7 +741,7 @@ mod tests {
         file.write_all(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
             .unwrap();
 
-        let result = load_image("test.png", temp_dir.path(), EmbedMode::Local);
+        let result = load_image("test.png", temp_dir.path(), &config_embed_local());
         assert!(result.is_ok());
         let img = result.unwrap().unwrap();
         assert_eq!(img.mime_type, "image/png");
@@ -695,7 +751,7 @@ mod tests {
     #[test]
     fn test_load_image_not_found() {
         let temp_dir = TempDir::new().unwrap();
-        let result = load_image("nonexistent.png", temp_dir.path(), EmbedMode::Local);
+        let result = load_image("nonexistent.png", temp_dir.path(), &config_embed_local());
         assert!(matches!(result, Err(ImageError::NotFound(_))));
     }
 
@@ -705,7 +761,7 @@ mod tests {
         let result = load_image_with_fallback(
             "nonexistent.png",
             temp_dir.path(),
-            EmbedMode::Local,
+            &config_embed_local(),
             true, // strict
         );
         assert!(result.is_err());
@@ -717,7 +773,7 @@ mod tests {
         let result = load_image_with_fallback(
             "nonexistent.png",
             temp_dir.path(),
-            EmbedMode::Local,
+            &config_embed_local(),
             false, // graceful
         );
         assert!(result.is_ok());
@@ -757,9 +813,10 @@ mod tests {
             .unwrap();
 
         let cache = ImageCache::new();
+        let config = config_embed_local();
 
         // First load
-        let result1 = cache.get_or_load("test.png", temp_dir.path(), EmbedMode::Local, false, None);
+        let result1 = cache.get_or_load("test.png", temp_dir.path(), &config, false);
         assert!(result1.is_ok());
         let img1 = result1.unwrap().unwrap();
         assert_eq!(img1.mime_type, "image/png");
@@ -767,7 +824,7 @@ mod tests {
         // Delete the file - second load should FAIL (no caching for local files)
         std::fs::remove_file(&image_path).unwrap();
 
-        let result2 = cache.get_or_load("test.png", temp_dir.path(), EmbedMode::Local, false, None);
+        let result2 = cache.get_or_load("test.png", temp_dir.path(), &config, false);
         assert!(result2.is_ok());
         // Returns None because file not found (graceful mode)
         assert!(result2.unwrap().is_none());
@@ -777,8 +834,8 @@ mod tests {
     fn test_image_cache_embed_none() {
         let cache = ImageCache::new();
 
-        // Load with EmbedMode::None returns None
-        let result = cache.get_or_load("test.png", Path::new("."), EmbedMode::None, false, None);
+        // Load with embed disabled returns None
+        let result = cache.get_or_load("test.png", Path::new("."), &config_embed_none(), false);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }

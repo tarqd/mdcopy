@@ -1,4 +1,3 @@
-use crate::EmbedMode;
 use log::{debug, trace};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -16,13 +15,23 @@ pub struct FileHighlightConfig {
     pub languages: HashMap<String, String>,
 }
 
-/// Optimize configuration from file
+/// Image embed configuration from file
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub struct FileOptimizeConfig {
-    pub enable: Option<bool>,
+pub struct FileImageEmbedConfig {
+    pub local: Option<bool>,
+    pub remote: Option<bool>,
+    pub optimize: Option<bool>,
     pub max_dimension: Option<u32>,
     pub quality: Option<u8>,
+}
+
+/// Image configuration from file (wrapper for nested [image.embed])
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FileImageConfig {
+    #[serde(default)]
+    pub embed: FileImageEmbedConfig,
 }
 
 /// Configuration loaded from file
@@ -32,12 +41,11 @@ pub struct FileConfig {
     pub input: Option<String>,
     pub output: Option<String>,
     pub root: Option<String>,
-    pub embed: Option<String>,
     pub strict: Option<bool>,
     #[serde(default)]
     pub highlight: FileHighlightConfig,
     #[serde(default)]
-    pub optimize: FileOptimizeConfig,
+    pub image: FileImageConfig,
 }
 
 /// Resolved highlight configuration
@@ -62,18 +70,22 @@ impl Default for HighlightConfig {
     }
 }
 
-/// Resolved optimize configuration
+/// Resolved image configuration
 #[derive(Debug, Clone)]
-pub struct OptimizeConfig {
-    pub enabled: bool,
+pub struct ImageConfig {
+    pub embed_local: bool,
+    pub embed_remote: bool,
+    pub optimize: bool,
     pub max_dimension: u32,
     pub quality: u8,
 }
 
-impl Default for OptimizeConfig {
+impl Default for ImageConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            embed_local: true,
+            embed_remote: false,
+            optimize: true,
             max_dimension: 1200,
             quality: 80,
         }
@@ -86,10 +98,9 @@ pub struct Config {
     pub input: PathBuf,
     pub output: Option<PathBuf>,
     pub root: Option<PathBuf>,
-    pub embed: EmbedMode,
     pub strict: bool,
     pub highlight: HighlightConfig,
-    pub optimize: OptimizeConfig,
+    pub image: ImageConfig,
 }
 
 impl Default for Config {
@@ -98,10 +109,9 @@ impl Default for Config {
             input: PathBuf::from("-"),
             output: None,
             root: None,
-            embed: EmbedMode::Local,
             strict: false,
             highlight: HighlightConfig::default(),
-            optimize: OptimizeConfig::default(),
+            image: ImageConfig::default(),
         }
     }
 }
@@ -205,15 +215,6 @@ fn parse_bool(s: &str) -> Option<bool> {
     }
 }
 
-fn parse_embed_mode(s: &str) -> Option<EmbedMode> {
-    match s.to_lowercase().as_str() {
-        "all" => Some(EmbedMode::All),
-        "local" => Some(EmbedMode::Local),
-        "none" => Some(EmbedMode::None),
-        _ => None,
-    }
-}
-
 /// CLI argument values for highlight settings
 pub struct CliHighlightArgs {
     pub enable: Option<bool>,
@@ -222,9 +223,11 @@ pub struct CliHighlightArgs {
     pub syntaxes_dir: Option<PathBuf>,
 }
 
-/// CLI argument values for optimize settings
-pub struct CliOptimizeArgs {
-    pub enable: Option<bool>,
+/// CLI argument values for image settings
+pub struct CliImageArgs {
+    pub embed_local: Option<bool>,
+    pub embed_remote: Option<bool>,
+    pub optimize: Option<bool>,
     pub max_dimension: Option<u32>,
     pub quality: Option<u8>,
 }
@@ -234,10 +237,9 @@ pub struct CliArgs {
     pub input: Option<PathBuf>,
     pub output: Option<PathBuf>,
     pub root: Option<PathBuf>,
-    pub embed: Option<EmbedMode>,
     pub strict: Option<bool>,
     pub highlight: CliHighlightArgs,
-    pub optimize: CliOptimizeArgs,
+    pub image: CliImageArgs,
 }
 
 impl HighlightConfig {
@@ -283,9 +285,6 @@ impl Config {
         if let Some(v) = file_config.root {
             config.root = Some(PathBuf::from(v));
         }
-        if let Some(v) = file_config.embed.and_then(|s| parse_embed_mode(&s)) {
-            config.embed = v;
-        }
         if let Some(v) = file_config.strict {
             config.strict = v;
         }
@@ -307,15 +306,21 @@ impl Config {
             config.highlight.languages.insert(k, v);
         }
 
-        // Apply optimize config from file
-        if let Some(v) = file_config.optimize.enable {
-            config.optimize.enabled = v;
+        // Apply image config from file
+        if let Some(v) = file_config.image.embed.local {
+            config.image.embed_local = v;
         }
-        if let Some(v) = file_config.optimize.max_dimension {
-            config.optimize.max_dimension = v;
+        if let Some(v) = file_config.image.embed.remote {
+            config.image.embed_remote = v;
         }
-        if let Some(v) = file_config.optimize.quality {
-            config.optimize.quality = v;
+        if let Some(v) = file_config.image.embed.optimize {
+            config.image.optimize = v;
+        }
+        if let Some(v) = file_config.image.embed.max_dimension {
+            config.image.max_dimension = v;
+        }
+        if let Some(v) = file_config.image.embed.quality {
+            config.image.quality = v;
         }
 
         // Apply environment variables (higher priority than config file)
@@ -327,9 +332,6 @@ impl Config {
         }
         if let Some(v) = env_var("root") {
             config.root = Some(PathBuf::from(v));
-        }
-        if let Some(v) = env_var("embed").and_then(|s| parse_embed_mode(&s)) {
-            config.embed = v;
         }
         if let Some(v) = env_var("strict").and_then(|s| parse_bool(&s)) {
             config.strict = v;
@@ -349,15 +351,21 @@ impl Config {
             config.highlight.syntaxes_dir = Some(PathBuf::from(v));
         }
 
-        // Optimize env vars (MDCOPY_OPTIMIZE_*)
-        if let Some(v) = env_var("optimize").and_then(|s| parse_bool(&s)) {
-            config.optimize.enabled = v;
+        // Image env vars (MDCOPY_IMAGE_EMBED_*)
+        if let Some(v) = env_var("image_embed_local").and_then(|s| parse_bool(&s)) {
+            config.image.embed_local = v;
         }
-        if let Some(v) = env_var("optimize_max_dimension").and_then(|s| s.parse().ok()) {
-            config.optimize.max_dimension = v;
+        if let Some(v) = env_var("image_embed_remote").and_then(|s| parse_bool(&s)) {
+            config.image.embed_remote = v;
         }
-        if let Some(v) = env_var("optimize_quality").and_then(|s| s.parse().ok()) {
-            config.optimize.quality = v;
+        if let Some(v) = env_var("image_embed_optimize").and_then(|s| parse_bool(&s)) {
+            config.image.optimize = v;
+        }
+        if let Some(v) = env_var("image_embed_max_dimension").and_then(|s| s.parse().ok()) {
+            config.image.max_dimension = v;
+        }
+        if let Some(v) = env_var("image_embed_quality").and_then(|s| s.parse().ok()) {
+            config.image.quality = v;
         }
 
         // Apply CLI arguments (highest priority)
@@ -369,9 +377,6 @@ impl Config {
         }
         if let Some(v) = cli.root {
             config.root = Some(v);
-        }
-        if let Some(v) = cli.embed {
-            config.embed = v;
         }
         if let Some(v) = cli.strict {
             config.strict = v;
@@ -391,15 +396,21 @@ impl Config {
             config.highlight.syntaxes_dir = Some(v);
         }
 
-        // Optimize CLI args
-        if let Some(v) = cli.optimize.enable {
-            config.optimize.enabled = v;
+        // Image CLI args
+        if let Some(v) = cli.image.embed_local {
+            config.image.embed_local = v;
         }
-        if let Some(v) = cli.optimize.max_dimension {
-            config.optimize.max_dimension = v;
+        if let Some(v) = cli.image.embed_remote {
+            config.image.embed_remote = v;
         }
-        if let Some(v) = cli.optimize.quality {
-            config.optimize.quality = v;
+        if let Some(v) = cli.image.optimize {
+            config.image.optimize = v;
+        }
+        if let Some(v) = cli.image.max_dimension {
+            config.image.max_dimension = v;
+        }
+        if let Some(v) = cli.image.quality {
+            config.image.quality = v;
         }
 
         config
@@ -417,7 +428,6 @@ mod tests {
             input: None,
             output: None,
             root: None,
-            embed: None,
             strict: None,
             highlight: CliHighlightArgs {
                 enable: None,
@@ -425,8 +435,10 @@ mod tests {
                 themes_dir: None,
                 syntaxes_dir: None,
             },
-            optimize: CliOptimizeArgs {
-                enable: None,
+            image: CliImageArgs {
+                embed_local: None,
+                embed_remote: None,
+                optimize: None,
                 max_dimension: None,
                 quality: None,
             },
@@ -439,13 +451,14 @@ mod tests {
         assert_eq!(config.input, PathBuf::from("-"));
         assert!(config.output.is_none());
         assert!(config.root.is_none());
-        assert_eq!(config.embed, crate::EmbedMode::Local);
         assert!(!config.strict);
         assert!(config.highlight.enable);
         assert_eq!(config.highlight.theme, "base16-ocean.dark");
-        assert!(config.optimize.enabled);
-        assert_eq!(config.optimize.max_dimension, 1200);
-        assert_eq!(config.optimize.quality, 80);
+        assert!(config.image.embed_local);
+        assert!(!config.image.embed_remote);
+        assert!(config.image.optimize);
+        assert_eq!(config.image.max_dimension, 1200);
+        assert_eq!(config.image.quality, 80);
     }
 
     #[test]
@@ -480,15 +493,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_embed_mode() {
-        assert_eq!(parse_embed_mode("all"), Some(crate::EmbedMode::All));
-        assert_eq!(parse_embed_mode("ALL"), Some(crate::EmbedMode::All));
-        assert_eq!(parse_embed_mode("local"), Some(crate::EmbedMode::Local));
-        assert_eq!(parse_embed_mode("none"), Some(crate::EmbedMode::None));
-        assert_eq!(parse_embed_mode("invalid"), None);
-    }
-
-    #[test]
     fn test_highlight_config_effective_theme() {
         let config = HighlightConfig {
             theme: "custom-theme".to_string(),
@@ -504,18 +508,21 @@ mod tests {
 
         let mut file = std::fs::File::create(&config_path).unwrap();
         writeln!(file, "strict = true").unwrap();
-        writeln!(file, "embed = \"all\"").unwrap();
         writeln!(file, "[highlight]").unwrap();
         writeln!(file, "enable = false").unwrap();
         writeln!(file, "theme = \"my-theme\"").unwrap();
+        writeln!(file, "[image.embed]").unwrap();
+        writeln!(file, "local = true").unwrap();
+        writeln!(file, "remote = true").unwrap();
 
         let config = load_config_file(&config_path);
         assert!(config.is_some());
         let config = config.unwrap();
         assert_eq!(config.strict, Some(true));
-        assert_eq!(config.embed, Some("all".to_string()));
         assert_eq!(config.highlight.enable, Some(false));
         assert_eq!(config.highlight.theme, Some("my-theme".to_string()));
+        assert_eq!(config.image.embed.local, Some(true));
+        assert_eq!(config.image.embed.remote, Some(true));
     }
 
     #[test]
@@ -564,7 +571,8 @@ mod tests {
 
         assert_eq!(config.input, PathBuf::from("-"));
         assert!(config.output.is_none());
-        assert_eq!(config.embed, crate::EmbedMode::Local);
+        assert!(config.image.embed_local);
+        assert!(!config.image.embed_remote);
         assert!(!config.strict);
         assert!(config.highlight.enable);
     }
@@ -575,7 +583,6 @@ mod tests {
             input: Some(PathBuf::from("input.md")),
             output: Some(PathBuf::from("output.html")),
             root: Some(PathBuf::from("/custom/root")),
-            embed: Some(crate::EmbedMode::All),
             strict: Some(true),
             highlight: CliHighlightArgs {
                 enable: Some(false),
@@ -583,8 +590,10 @@ mod tests {
                 themes_dir: Some(PathBuf::from("/themes")),
                 syntaxes_dir: Some(PathBuf::from("/syntaxes")),
             },
-            optimize: CliOptimizeArgs {
-                enable: Some(false),
+            image: CliImageArgs {
+                embed_local: Some(true),
+                embed_remote: Some(true),
+                optimize: Some(false),
                 max_dimension: Some(800),
                 quality: Some(75),
             },
@@ -595,7 +604,8 @@ mod tests {
         assert_eq!(config.input, PathBuf::from("input.md"));
         assert_eq!(config.output, Some(PathBuf::from("output.html")));
         assert_eq!(config.root, Some(PathBuf::from("/custom/root")));
-        assert_eq!(config.embed, crate::EmbedMode::All);
+        assert!(config.image.embed_local);
+        assert!(config.image.embed_remote);
         assert!(config.strict);
         assert!(!config.highlight.enable);
         assert_eq!(config.highlight.theme, "custom");
@@ -604,9 +614,9 @@ mod tests {
             config.highlight.syntaxes_dir,
             Some(PathBuf::from("/syntaxes"))
         );
-        assert!(!config.optimize.enabled);
-        assert_eq!(config.optimize.max_dimension, 800);
-        assert_eq!(config.optimize.quality, 75);
+        assert!(!config.image.optimize);
+        assert_eq!(config.image.max_dimension, 800);
+        assert_eq!(config.image.quality, 75);
     }
 
     #[test]
@@ -680,11 +690,12 @@ mod tests {
         assert!(config.input.is_none());
         assert!(config.output.is_none());
         assert!(config.root.is_none());
-        assert!(config.embed.is_none());
         assert!(config.strict.is_none());
         assert!(config.highlight.enable.is_none());
-        assert!(config.optimize.enable.is_none());
-        assert!(config.optimize.max_dimension.is_none());
-        assert!(config.optimize.quality.is_none());
+        assert!(config.image.embed.local.is_none());
+        assert!(config.image.embed.remote.is_none());
+        assert!(config.image.embed.optimize.is_none());
+        assert!(config.image.embed.max_dimension.is_none());
+        assert!(config.image.embed.quality.is_none());
     }
 }

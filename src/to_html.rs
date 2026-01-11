@@ -1,5 +1,4 @@
-use crate::EmbedMode;
-use crate::config::OptimizeConfig;
+use crate::config::ImageConfig;
 use crate::highlight::HighlightContext;
 use crate::image::{ImageCache, ImageError};
 use markdown::mdast::{AlignKind, Node};
@@ -10,45 +9,61 @@ use syntect::util::LinesWithEndings;
 pub fn mdast_to_html(
     node: &Node,
     base_dir: &Path,
-    embed_mode: EmbedMode,
+    image_config: &ImageConfig,
     strict: bool,
     highlight: Option<&HighlightContext>,
     image_cache: &ImageCache,
-    optimize: Option<&OptimizeConfig>,
 ) -> Result<String, ImageError> {
+    let ctx = HtmlContext::new(base_dir, image_config, strict, highlight, image_cache);
     let mut html = String::new();
-    node_to_html(node, &mut html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+    node_to_html(node, &mut html, &ctx)?;
     Ok(html)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn node_to_html(
-    node: &Node,
-    html: &mut String,
-    base_dir: &Path,
-    embed_mode: EmbedMode,
+struct HtmlContext<'a> {
+    base_dir: &'a Path,
+    image_config: &'a ImageConfig,
     strict: bool,
-    highlight: Option<&HighlightContext>,
-    image_cache: &ImageCache,
-    optimize: Option<&OptimizeConfig>,
-) -> Result<(), ImageError> {
+    highlight: Option<&'a HighlightContext>,
+    image_cache: &'a ImageCache,
+}
+
+impl<'a> HtmlContext<'a> {
+    fn new(
+        base_dir: &'a Path,
+        image_config: &'a ImageConfig,
+        strict: bool,
+        highlight: Option<&'a HighlightContext>,
+        image_cache: &'a ImageCache,
+    ) -> Self {
+        Self {
+            base_dir,
+            image_config,
+            strict,
+            highlight,
+            image_cache,
+        }
+    }
+}
+
+fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(), ImageError> {
     match node {
         Node::Root(root) => {
             for child in &root.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+                node_to_html(child, html, ctx)?;
             }
         }
         Node::Heading(heading) => {
             html.push_str(&format!("<h{}>", heading.depth));
             for child in &heading.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+                node_to_html(child, html, ctx)?;
             }
             html.push_str(&format!("</h{}>\n", heading.depth));
         }
         Node::Paragraph(para) => {
             html.push_str("<p>");
             for child in &para.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+                node_to_html(child, html, ctx)?;
             }
             html.push_str("</p>\n");
         }
@@ -58,14 +73,14 @@ fn node_to_html(
         Node::Strong(strong) => {
             html.push_str("<strong>");
             for child in &strong.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+                node_to_html(child, html, ctx)?;
             }
             html.push_str("</strong>");
         }
         Node::Emphasis(em) => {
             html.push_str("<em>");
             for child in &em.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+                node_to_html(child, html, ctx)?;
             }
             html.push_str("</em>");
         }
@@ -75,15 +90,15 @@ fn node_to_html(
             html.push_str("</code>");
         }
         Node::Code(code) => {
-            if let Some(ctx) = highlight {
+            if let Some(hl) = ctx.highlight {
                 let syntax = code
                     .lang
                     .as_ref()
-                    .map(|lang| ctx.find_syntax(lang))
-                    .unwrap_or_else(|| ctx.syntax_set.find_syntax_plain_text());
+                    .map(|lang| hl.find_syntax(lang))
+                    .unwrap_or_else(|| hl.syntax_set.find_syntax_plain_text());
 
                 // Get background color from theme
-                let bg_color = ctx
+                let bg_color = hl
                     .theme
                     .settings
                     .background
@@ -96,10 +111,10 @@ fn node_to_html(
                     bg_color
                 ));
 
-                let mut highlighter = HighlightLines::new(syntax, &ctx.theme);
+                let mut highlighter = HighlightLines::new(syntax, &hl.theme);
                 let lines: Vec<&str> = LinesWithEndings::from(&code.value).collect();
                 for (i, line) in lines.iter().enumerate() {
-                    if let Ok(ranges) = highlighter.highlight_line(line, &ctx.syntax_set) {
+                    if let Ok(ranges) = highlighter.highlight_line(line, &hl.syntax_set) {
                         for (style, text) in ranges {
                             // Skip rendering the trailing newline character
                             let text = text.trim_end_matches('\n');
@@ -138,12 +153,17 @@ fn node_to_html(
         Node::Link(link) => {
             html.push_str(&format!("<a href=\"{}\">", html_escape(&link.url)));
             for child in &link.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+                node_to_html(child, html, ctx)?;
             }
             html.push_str("</a>");
         }
         Node::Image(image) => {
-            let img = image_cache.get_or_load(&image.url, base_dir, embed_mode, strict, optimize)?;
+            let img = ctx.image_cache.get_or_load(
+                &image.url,
+                ctx.base_dir,
+                ctx.image_config,
+                ctx.strict,
+            )?;
             let src = img
                 .map(|i| i.to_data_url())
                 .unwrap_or_else(|| image.url.clone());
@@ -169,22 +189,16 @@ fn node_to_html(
                     if !list.spread && item.children.len() == 1 {
                         if let Some(Node::Paragraph(para)) = item.children.first() {
                             for para_child in &para.children {
-                                node_to_html(
-                                    para_child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize,
-                                )?;
+                                node_to_html(para_child, html, ctx)?;
                             }
                         } else {
                             for item_child in &item.children {
-                                node_to_html(
-                                    item_child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize,
-                                )?;
+                                node_to_html(item_child, html, ctx)?;
                             }
                         }
                     } else {
                         for item_child in &item.children {
-                            node_to_html(
-                                item_child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize,
-                            )?;
+                            node_to_html(item_child, html, ctx)?;
                         }
                     }
                     html.push_str("</li>\n");
@@ -198,7 +212,7 @@ fn node_to_html(
         Node::Blockquote(bq) => {
             html.push_str("<blockquote>\n");
             for child in &bq.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+                node_to_html(child, html, ctx)?;
             }
             html.push_str("</blockquote>\n");
         }
@@ -211,7 +225,7 @@ fn node_to_html(
         Node::Delete(del) => {
             html.push_str("<del>");
             for child in &del.children {
-                node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+                node_to_html(child, html, ctx)?;
             }
             html.push_str("</del>");
         }
@@ -219,33 +233,11 @@ fn node_to_html(
             // Use old-school HTML attributes for email/paste compatibility
             html.push_str("<table border=\"0\" cellpadding=\"8\" cellspacing=\"0\">\n<thead>\n");
             if let Some(first_row) = table.children.first() {
-                render_table_row(
-                    first_row,
-                    html,
-                    &table.align,
-                    true,
-                    base_dir,
-                    embed_mode,
-                    strict,
-                    highlight,
-                    image_cache,
-                    optimize,
-                )?;
+                render_table_row(first_row, html, &table.align, true, ctx)?;
             }
             html.push_str("</thead>\n<tbody>\n");
             for row in table.children.iter().skip(1) {
-                render_table_row(
-                    row,
-                    html,
-                    &table.align,
-                    false,
-                    base_dir,
-                    embed_mode,
-                    strict,
-                    highlight,
-                    image_cache,
-                    optimize,
-                )?;
+                render_table_row(row, html, &table.align, false, ctx)?;
             }
             html.push_str("</tbody>\n</table>\n");
         }
@@ -257,18 +249,12 @@ fn node_to_html(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_table_row(
     node: &Node,
     html: &mut String,
     align: &[AlignKind],
     is_header: bool,
-    base_dir: &Path,
-    embed_mode: EmbedMode,
-    strict: bool,
-    highlight: Option<&HighlightContext>,
-    image_cache: &ImageCache,
-    optimize: Option<&OptimizeConfig>,
+    ctx: &HtmlContext,
 ) -> Result<(), ImageError> {
     if let Node::TableRow(row) = node {
         html.push_str("<tr>\n");
@@ -284,7 +270,7 @@ fn render_table_row(
             html.push_str(&format!("<{}{} nowrap>", tag, align_attr));
             if let Node::TableCell(cell) = cell {
                 for child in &cell.children {
-                    node_to_html(child, html, base_dir, embed_mode, strict, highlight, image_cache, optimize)?;
+                    node_to_html(child, html, ctx)?;
                 }
             }
             html.push_str(&format!("</{}>\n", tag));
@@ -320,7 +306,14 @@ mod tests {
     fn render_html(md: &str) -> String {
         let ast = parse_markdown(md);
         let cache = crate::image::ImageCache::new();
-        mdast_to_html(&ast, Path::new("."), crate::EmbedMode::None, false, None, &cache, None).unwrap()
+        let image_config = crate::config::ImageConfig {
+            embed_local: false,
+            embed_remote: false,
+            optimize: false,
+            max_dimension: 1200,
+            quality: 80,
+        };
+        mdast_to_html(&ast, Path::new("."), &image_config, false, None, &cache).unwrap()
     }
 
     #[test]

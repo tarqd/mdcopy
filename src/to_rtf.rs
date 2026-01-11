@@ -1,5 +1,4 @@
-use crate::EmbedMode;
-use crate::config::OptimizeConfig;
+use crate::config::ImageConfig;
 use crate::highlight::HighlightContext;
 use crate::image::{ImageCache, ImageError};
 use log::warn;
@@ -11,13 +10,12 @@ use syntect::easy::HighlightLines;
 pub fn mdast_to_rtf(
     node: &Node,
     base_dir: &Path,
-    embed_mode: EmbedMode,
+    image_config: &ImageConfig,
     strict: bool,
     highlight: Option<&HighlightContext>,
     image_cache: &ImageCache,
-    optimize: Option<&OptimizeConfig>,
 ) -> Result<String, ImageError> {
-    let mut ctx = RtfContext::new(base_dir, embed_mode, strict, highlight, image_cache, optimize);
+    let mut ctx = RtfContext::new(base_dir, image_config, strict, highlight, image_cache);
     let mut body = String::new();
     node_to_rtf(node, &mut body, &mut ctx)?;
 
@@ -43,11 +41,10 @@ pub fn mdast_to_rtf(
 
 struct RtfContext<'a> {
     base_dir: &'a Path,
-    embed_mode: EmbedMode,
+    image_config: &'a ImageConfig,
     strict: bool,
     highlight: Option<&'a HighlightContext>,
     image_cache: &'a ImageCache,
-    optimize: Option<&'a OptimizeConfig>,
     colors: HashMap<(u8, u8, u8), usize>,
     table_align: Vec<AlignKind>,
     table_cell_index: usize,
@@ -57,19 +54,17 @@ struct RtfContext<'a> {
 impl<'a> RtfContext<'a> {
     fn new(
         base_dir: &'a Path,
-        embed_mode: EmbedMode,
+        image_config: &'a ImageConfig,
         strict: bool,
         highlight: Option<&'a HighlightContext>,
         image_cache: &'a ImageCache,
-        optimize: Option<&'a OptimizeConfig>,
     ) -> Self {
         Self {
             base_dir,
-            embed_mode,
+            image_config,
             strict,
             highlight,
             image_cache,
-            optimize,
             colors: HashMap::new(),
             table_align: Vec::new(),
             table_cell_index: 0,
@@ -252,8 +247,12 @@ fn node_to_rtf(node: &Node, rtf: &mut String, ctx: &mut RtfContext) -> Result<()
             ctx.table_cell_index += 1;
         }
         Node::Image(image) => {
-            let img =
-                ctx.image_cache.get_or_load(&image.url, ctx.base_dir, ctx.embed_mode, ctx.strict, ctx.optimize)?;
+            let img = ctx.image_cache.get_or_load(
+                &image.url,
+                ctx.base_dir,
+                ctx.image_config,
+                ctx.strict,
+            )?;
 
             if let Some(img) = img {
                 if let Some(format) = img.rtf_format() {
@@ -324,7 +323,14 @@ mod tests {
     fn render_rtf(md: &str) -> String {
         let ast = parse_markdown(md);
         let cache = crate::image::ImageCache::new();
-        mdast_to_rtf(&ast, Path::new("."), crate::EmbedMode::None, false, None, &cache, None).unwrap()
+        let image_config = crate::config::ImageConfig {
+            embed_local: false,
+            embed_remote: false,
+            optimize: false,
+            max_dimension: 1200,
+            quality: 80,
+        };
+        mdast_to_rtf(&ast, Path::new("."), &image_config, false, None, &cache).unwrap()
     }
 
     #[test]
@@ -517,7 +523,14 @@ mod tests {
     #[test]
     fn test_rtf_context_get_color_index() {
         let cache = crate::image::ImageCache::new();
-        let mut ctx = RtfContext::new(Path::new("."), crate::EmbedMode::None, false, None, &cache, None);
+        let image_config = crate::config::ImageConfig {
+            embed_local: false,
+            embed_remote: false,
+            optimize: false,
+            max_dimension: 1200,
+            quality: 80,
+        };
+        let mut ctx = RtfContext::new(Path::new("."), &image_config, false, None, &cache);
 
         // First color should get index 1 (RTF color indices are 1-based)
         let idx1 = ctx.get_color_index(255, 0, 0);

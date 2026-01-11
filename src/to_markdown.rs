@@ -1,5 +1,4 @@
-use crate::EmbedMode;
-use crate::config::OptimizeConfig;
+use crate::config::ImageConfig;
 use crate::image::{ImageCache, ImageError};
 use markdown::mdast::{AlignKind, Node};
 use std::path::Path;
@@ -7,12 +6,11 @@ use std::path::Path;
 pub fn mdast_to_markdown(
     node: &Node,
     base_dir: &Path,
-    embed_mode: EmbedMode,
+    image_config: &ImageConfig,
     strict: bool,
     image_cache: &ImageCache,
-    optimize: Option<&OptimizeConfig>,
 ) -> Result<String, ImageError> {
-    let mut ctx = MarkdownContext::new(base_dir, embed_mode, strict, image_cache, optimize);
+    let mut ctx = MarkdownContext::new(base_dir, image_config, strict, image_cache);
     let mut output = String::new();
     node_to_markdown(node, &mut output, &mut ctx)?;
     // Trim trailing whitespace but ensure single trailing newline
@@ -26,10 +24,9 @@ pub fn mdast_to_markdown(
 
 struct MarkdownContext<'a> {
     base_dir: &'a Path,
-    embed_mode: EmbedMode,
+    image_config: &'a ImageConfig,
     strict: bool,
     image_cache: &'a ImageCache,
-    optimize: Option<&'a OptimizeConfig>,
     /// Current list depth for indentation
     list_depth: usize,
     /// Stack of list types (true = ordered, false = unordered)
@@ -43,17 +40,15 @@ struct MarkdownContext<'a> {
 impl<'a> MarkdownContext<'a> {
     fn new(
         base_dir: &'a Path,
-        embed_mode: EmbedMode,
+        image_config: &'a ImageConfig,
         strict: bool,
         image_cache: &'a ImageCache,
-        optimize: Option<&'a OptimizeConfig>,
     ) -> Self {
         Self {
             base_dir,
-            embed_mode,
+            image_config,
             strict,
             image_cache,
-            optimize,
             list_depth: 0,
             list_stack: Vec::new(),
             list_indices: Vec::new(),
@@ -187,8 +182,12 @@ fn node_to_markdown(
             md.push(')');
         }
         Node::Image(image) => {
-            let img =
-                ctx.image_cache.get_or_load(&image.url, ctx.base_dir, ctx.embed_mode, ctx.strict, ctx.optimize)?;
+            let img = ctx.image_cache.get_or_load(
+                &image.url,
+                ctx.base_dir,
+                ctx.image_config,
+                ctx.strict,
+            )?;
             let src = img
                 .map(|i| i.to_data_url())
                 .unwrap_or_else(|| image.url.clone());
@@ -479,7 +478,14 @@ mod tests {
     fn roundtrip(md: &str) -> String {
         let ast = parse_markdown(md);
         let cache = crate::image::ImageCache::new();
-        mdast_to_markdown(&ast, Path::new("."), crate::EmbedMode::None, false, &cache, None).unwrap()
+        let image_config = crate::config::ImageConfig {
+            embed_local: false,
+            embed_remote: false,
+            optimize: false,
+            max_dimension: 1200,
+            quality: 80,
+        };
+        mdast_to_markdown(&ast, Path::new("."), &image_config, false, &cache).unwrap()
     }
 
     #[test]
