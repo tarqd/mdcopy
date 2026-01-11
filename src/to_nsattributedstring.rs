@@ -51,14 +51,14 @@ use log::{debug, warn};
 use markdown::mdast::Node;
 use std::path::Path;
 
-use objc2::ClassType;
+use objc2::AnyThread;
 use objc2::rc::{Retained, autoreleasepool};
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_app_kit::{
     NSAttributedStringAttachmentConveniences, NSBackgroundColorAttributeName, NSColor, NSFont,
-    NSFontAttributeName, NSFontDescriptor, NSFontItalicTrait, NSForegroundColorAttributeName,
-    NSImage, NSLinkAttributeName, NSParagraphStyleAttributeName, NSPasteboard,
-    NSStrikethroughStyleAttributeName, NSTextAttachment,
+    NSFontAttributeName, NSFontDescriptorSymbolicTraits, NSFontItalicTrait,
+    NSForegroundColorAttributeName, NSImage, NSLinkAttributeName, NSPasteboard,
+    NSPasteboardWriting, NSStrikethroughStyleAttributeName, NSTextAttachment,
 };
 use objc2_foundation::{NSAttributedString, NSMutableAttributedString, NSRange, NSString, NSURL};
 
@@ -94,7 +94,10 @@ pub fn write_to_pasteboard(attr_string: &NSAttributedString) -> Result<(), Strin
 
         // Write the attributed string directly - macOS will automatically provide
         // multiple representations (RTFD, RTF, plain text, etc.)
-        let objects = objc2_foundation::NSArray::from_slice(&[attr_string]);
+        // NSAttributedString implements NSPasteboardWriting, so we need to convert it
+        let protocol_obj: &ProtocolObject<dyn NSPasteboardWriting> =
+            ProtocolObject::from_ref(attr_string);
+        let objects = objc2_foundation::NSArray::from_slice(&[protocol_obj]);
 
         if !pasteboard.writeObjects(&objects) {
             return Err("Failed to write attributed string to pasteboard".into());
@@ -238,8 +241,11 @@ fn append_text(attr_string: &NSMutableAttributedString, text: &str) {
 fn apply_bold(attr_string: &NSMutableAttributedString, range: NSRange) {
     unsafe {
         // Get the current font or use system font
-        let current_font =
-            attr_string.attribute_atIndex_effectiveRange(NSFontAttributeName, range.location, None);
+        let current_font = attr_string.attribute_atIndex_effectiveRange(
+            NSFontAttributeName,
+            range.location,
+            std::ptr::null_mut(),
+        );
 
         let font_size = if let Some(font_obj) = current_font {
             // Try to get the current font and its size
@@ -266,8 +272,11 @@ fn apply_bold(attr_string: &NSMutableAttributedString, range: NSRange) {
 fn apply_italic(attr_string: &NSMutableAttributedString, range: NSRange) {
     unsafe {
         // Get the current font or use system font
-        let current_font =
-            attr_string.attribute_atIndex_effectiveRange(NSFontAttributeName, range.location, None);
+        let current_font = attr_string.attribute_atIndex_effectiveRange(
+            NSFontAttributeName,
+            range.location,
+            std::ptr::null_mut(),
+        );
 
         let (base_font, font_size) = if let Some(font_obj) = current_font {
             if let Some(font) = font_obj.downcast_ref::<NSFont>() {
@@ -289,7 +298,7 @@ fn apply_italic(attr_string: &NSMutableAttributedString, range: NSRange) {
 
         // Get current symbolic traits and add italic trait
         let current_traits = descriptor.symbolicTraits();
-        let italic_traits = current_traits | NSFontItalicTrait;
+        let italic_traits = current_traits | NSFontDescriptorSymbolicTraits(NSFontItalicTrait);
 
         // Create new descriptor with italic trait
         let italic_descriptor = descriptor.fontDescriptorWithSymbolicTraits(italic_traits);
@@ -343,8 +352,11 @@ fn apply_heading(attr_string: &NSMutableAttributedString, range: NSRange, depth:
 fn apply_monospace(attr_string: &NSMutableAttributedString, range: NSRange) {
     unsafe {
         // Get current font size or use system default
-        let current_font =
-            attr_string.attribute_atIndex_effectiveRange(NSFontAttributeName, range.location, None);
+        let current_font = attr_string.attribute_atIndex_effectiveRange(
+            NSFontAttributeName,
+            range.location,
+            std::ptr::null_mut(),
+        );
 
         let font_size = if let Some(font_obj) = current_font {
             if let Some(current_font) = font_obj.downcast_ref::<NSFont>() {
@@ -409,8 +421,11 @@ fn apply_strikethrough(attr_string: &NSMutableAttributedString, range: NSRange) 
 fn apply_code_block(attr_string: &NSMutableAttributedString, range: NSRange) {
     unsafe {
         // Get current or default font size
-        let current_font =
-            attr_string.attribute_atIndex_effectiveRange(NSFontAttributeName, range.location, None);
+        let current_font = attr_string.attribute_atIndex_effectiveRange(
+            NSFontAttributeName,
+            range.location,
+            std::ptr::null_mut(),
+        );
 
         let font_size = if let Some(font_obj) = current_font {
             if let Some(current_font) = font_obj.downcast_ref::<NSFont>() {
