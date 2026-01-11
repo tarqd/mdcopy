@@ -232,9 +232,12 @@ fn node_to_attributed_string(
 
 /// Append plain text to attributed string
 fn append_text(attr_string: &NSMutableAttributedString, text: &str) {
-    let ns_string = NSString::from_str(text);
-    let append_string = NSAttributedString::initWithString(NSAttributedString::alloc(), &ns_string);
-    attr_string.appendAttributedString(&append_string);
+    unsafe {
+        let ns_string = NSString::from_str(text);
+        let append_string =
+            NSAttributedString::initWithString(NSAttributedString::alloc(), &ns_string);
+        attr_string.appendAttributedString(&append_string);
+    }
 }
 
 /// Apply bold formatting to a range
@@ -278,19 +281,25 @@ fn apply_italic(attr_string: &NSMutableAttributedString, range: NSRange) {
             std::ptr::null_mut(),
         );
 
-        let (base_font, font_size) = if let Some(font_obj) = current_font {
+        // Extract font size first to avoid lifetime issues
+        let font_size = if let Some(ref font_obj) = current_font {
             if let Some(font) = font_obj.downcast_ref::<NSFont>() {
-                (Some(font.clone()), font.pointSize())
+                font.pointSize()
             } else {
-                (None, NSFont::systemFontSize())
+                NSFont::systemFontSize()
             }
         } else {
-            (None, NSFont::systemFontSize())
+            NSFont::systemFontSize()
         };
 
         // Get the font descriptor from current font or create a new one
-        let descriptor = if let Some(font) = base_font {
-            font.fontDescriptor()
+        let descriptor = if let Some(ref font_obj) = current_font {
+            if let Some(font) = font_obj.downcast_ref::<NSFont>() {
+                font.fontDescriptor()
+            } else {
+                let system_font = NSFont::systemFontOfSize(font_size);
+                system_font.fontDescriptor()
+            }
         } else {
             let system_font = NSFont::systemFontOfSize(font_size);
             system_font.fontDescriptor()
@@ -486,52 +495,51 @@ fn embed_image(
     alt: &str,
     ctx: &mut AttributedStringContext,
 ) -> Result<(), String> {
-    // Determine if this is a local file or remote URL
-    let ns_image = if url.starts_with("http://") || url.starts_with("https://") {
-        // Remote URL - let NSImage fetch it
-        let nsurl = NSURL::URLWithString(&NSString::from_str(url));
-        if let Some(nsurl) = nsurl {
-            NSImage::initWithContentsOfURL(NSImage::alloc(), &nsurl)
+    unsafe {
+        // Determine if this is a local file or remote URL
+        let ns_image = if url.starts_with("http://") || url.starts_with("https://") {
+            // Remote URL - let NSImage fetch it
+            let nsurl = NSURL::URLWithString(&NSString::from_str(url));
+            if let Some(nsurl) = nsurl {
+                NSImage::initWithContentsOfURL(NSImage::alloc(), &nsurl)
+            } else {
+                warn!("Failed to create NSURL for: {}", url);
+                None
+            }
         } else {
-            warn!("Failed to create NSURL for: {}", url);
-            None
-        }
-    } else {
-        // Local file path - resolve relative to base_dir
-        let path = if std::path::Path::new(url).is_absolute() {
-            url.to_string()
-        } else {
-            ctx.base_dir.join(url).to_string_lossy().to_string()
+            // Local file path - resolve relative to base_dir
+            let path = if std::path::Path::new(url).is_absolute() {
+                url.to_string()
+            } else {
+                ctx.base_dir.join(url).to_string_lossy().to_string()
+            };
+
+            let ns_path = NSString::from_str(&path);
+            NSImage::initWithContentsOfFile(NSImage::alloc(), &ns_path)
         };
 
-        let ns_path = NSString::from_str(&path);
-        NSImage::initWithContentsOfFile(NSImage::alloc(), &ns_path)
-    };
+        if let Some(ns_image) = ns_image {
+            // Create NSTextAttachment with the image
+            let attachment = NSTextAttachment::new();
 
-    if let Some(ns_image) = ns_image {
-        // Create NSTextAttachment with the image
-        let attachment = NSTextAttachment::new();
-
-        // Set the image on the attachment (macOS 10.11+)
-        unsafe {
+            // Set the image on the attachment (macOS 10.11+)
             attachment.setImage(Some(&ns_image));
+
+            // Create attributed string from attachment
+            let attachment_string = NSAttributedString::attributedStringWithAttachment(&attachment);
+
+            // Append to the main attributed string
+            attr_string.appendAttributedString(&attachment_string);
+
+            debug!("Image embedded successfully: {}", url);
+        } else {
+            warn!("Failed to load image: {}", url);
+            // Fallback: insert alt text with URL
+            append_text(attr_string, &format!("[{}]({})", alt, url));
         }
 
-        // Create attributed string from attachment
-        let attachment_string =
-            unsafe { NSAttributedString::attributedStringWithAttachment(&attachment) };
-
-        // Append to the main attributed string
-        attr_string.appendAttributedString(&attachment_string);
-
-        debug!("Image embedded successfully: {}", url);
-    } else {
-        warn!("Failed to load image: {}", url);
-        // Fallback: insert alt text with URL
-        append_text(attr_string, &format!("[{}]({})", alt, url));
+        Ok(())
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
