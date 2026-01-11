@@ -87,7 +87,6 @@ pub fn mdast_to_nsattributed_string(
 ///
 /// This writes the attributed string directly to NSPasteboard, allowing macOS apps
 /// to get rich text with embedded images when pasting.
-#[allow(dead_code)]
 pub fn write_to_pasteboard(attr_string: &NSAttributedString) -> Result<(), String> {
     autoreleasepool(|_| {
         let pasteboard = NSPasteboard::generalPasteboard();

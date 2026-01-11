@@ -31,6 +31,8 @@ pub enum ClipboardFormat {
     Html,
     Rtf,
     Markdown,
+    #[cfg(target_os = "macos")]
+    Native,
 }
 
 fn parse_formats(s: &str) -> Result<Vec<ClipboardFormat>, String> {
@@ -40,6 +42,12 @@ fn parse_formats(s: &str) -> Result<Vec<ClipboardFormat>, String> {
             "html" => formats.push(ClipboardFormat::Html),
             "rtf" => formats.push(ClipboardFormat::Rtf),
             "markdown" | "md" => formats.push(ClipboardFormat::Markdown),
+            #[cfg(target_os = "macos")]
+            "native" | "nsattributedstring" => formats.push(ClipboardFormat::Native),
+            #[cfg(not(target_os = "macos"))]
+            "native" | "nsattributedstring" => {
+                return Err("Native format is only available on macOS".to_string());
+            }
             other => return Err(format!("Unknown format: {}", other)),
         }
     }
@@ -290,6 +298,11 @@ fn main() -> io::Result<()> {
                 eprintln!("Error: File output only supports a single format");
                 std::process::exit(1);
             }
+            #[cfg(target_os = "macos")]
+            if parsed.contains(&ClipboardFormat::Native) {
+                eprintln!("Error: Native format is only supported for clipboard output");
+                std::process::exit(1);
+            }
             parsed
         }
         (Some(fmt), false) => parse_formats(fmt).expect("Invalid format specification"),
@@ -338,6 +351,26 @@ fn main() -> io::Result<()> {
         None
     };
 
+    #[cfg(target_os = "macos")]
+    let native_output = if formats.contains(&ClipboardFormat::Native) {
+        Some(
+            to_nsattributedstring::mdast_to_nsattributed_string(&ast, &base_dir)
+                .map_err(io::Error::other)?,
+        )
+    } else {
+        None
+    };
+
+    #[cfg(target_os = "macos")]
+    debug!(
+        "Generated: HTML={}, RTF={}, Markdown={}, Native={}",
+        html_output.as_ref().map(|s| s.len()).unwrap_or(0),
+        rtf_output.as_ref().map(|s| s.len()).unwrap_or(0),
+        markdown_output.as_ref().map(|s| s.len()).unwrap_or(0),
+        native_output.is_some(),
+    );
+
+    #[cfg(not(target_os = "macos"))]
     debug!(
         "Generated: HTML={}, RTF={}, Markdown={}",
         html_output.as_ref().map(|s| s.len()).unwrap_or(0),
@@ -369,35 +402,82 @@ fn main() -> io::Result<()> {
         }
         None => {
             debug!("Writing to clipboard");
-            let ctx = ClipboardContext::new().expect("Failed to create clipboard context");
 
-            let mut contents = Vec::new();
+            #[cfg(target_os = "macos")]
+            if formats.contains(&ClipboardFormat::Native) {
+                // Use native NSAttributedString clipboard on macOS
+                let attr_string = native_output.as_ref().expect("Native output missing");
+                to_nsattributedstring::write_to_pasteboard(attr_string)
+                    .expect("Failed to write NSAttributedString to pasteboard");
+                info!("Copied to clipboard (Native NSAttributedString)");
+            } else {
+                // Use clipboard_rs for HTML/RTF/Markdown
+                let ctx = ClipboardContext::new().expect("Failed to create clipboard context");
 
-            // Always include plain text (original markdown) as fallback
-            contents.push(ClipboardContent::Text(markdown_text));
+                let mut contents = Vec::new();
 
-            if let Some(html) = html_output {
-                contents.push(ClipboardContent::Html(html));
+                // Always include plain text (original markdown) as fallback
+                contents.push(ClipboardContent::Text(markdown_text));
+
+                if let Some(html) = html_output {
+                    contents.push(ClipboardContent::Html(html));
+                }
+                if let Some(rtf) = rtf_output {
+                    contents.push(ClipboardContent::Rtf(rtf));
+                }
+                if let Some(md) = markdown_output {
+                    // Markdown with embedded images replaces plain text
+                    contents[0] = ClipboardContent::Text(md);
+                }
+
+                let format_names: Vec<&str> = formats
+                    .iter()
+                    .map(|f| match f {
+                        ClipboardFormat::Html => "HTML",
+                        ClipboardFormat::Rtf => "RTF",
+                        ClipboardFormat::Markdown => "Markdown",
+                        #[cfg(target_os = "macos")]
+                        ClipboardFormat::Native => "Native",
+                    })
+                    .collect();
+
+                ctx.set(contents).expect("Failed to set clipboard content");
+                info!("Copied to clipboard ({})", format_names.join(", "));
             }
-            if let Some(rtf) = rtf_output {
-                contents.push(ClipboardContent::Rtf(rtf));
-            }
-            if let Some(md) = markdown_output {
-                // Markdown with embedded images replaces plain text
-                contents[0] = ClipboardContent::Text(md);
-            }
 
-            let format_names: Vec<&str> = formats
-                .iter()
-                .map(|f| match f {
-                    ClipboardFormat::Html => "HTML",
-                    ClipboardFormat::Rtf => "RTF",
-                    ClipboardFormat::Markdown => "Markdown",
-                })
-                .collect();
+            #[cfg(not(target_os = "macos"))]
+            {
+                // Use clipboard_rs for HTML/RTF/Markdown
+                let ctx = ClipboardContext::new().expect("Failed to create clipboard context");
 
-            ctx.set(contents).expect("Failed to set clipboard content");
-            info!("Copied to clipboard ({})", format_names.join(", "));
+                let mut contents = Vec::new();
+
+                // Always include plain text (original markdown) as fallback
+                contents.push(ClipboardContent::Text(markdown_text));
+
+                if let Some(html) = html_output {
+                    contents.push(ClipboardContent::Html(html));
+                }
+                if let Some(rtf) = rtf_output {
+                    contents.push(ClipboardContent::Rtf(rtf));
+                }
+                if let Some(md) = markdown_output {
+                    // Markdown with embedded images replaces plain text
+                    contents[0] = ClipboardContent::Text(md);
+                }
+
+                let format_names: Vec<&str> = formats
+                    .iter()
+                    .map(|f| match f {
+                        ClipboardFormat::Html => "HTML",
+                        ClipboardFormat::Rtf => "RTF",
+                        ClipboardFormat::Markdown => "Markdown",
+                    })
+                    .collect();
+
+                ctx.set(contents).expect("Failed to set clipboard content");
+                info!("Copied to clipboard ({})", format_names.join(", "));
+            }
         }
     }
 
