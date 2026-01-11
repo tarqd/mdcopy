@@ -377,10 +377,10 @@ fn apply_monospace(attr_string: &NSMutableAttributedString, range: NSRange) {
             NSFont::systemFontSize()
         };
 
-        // Create monospaced font
-        let mono_font = NSFont::monospacedSystemFontOfSize_weight(
-            font_size, 0.0, // Regular weight (NSFontWeightRegular = 0.0)
-        );
+        // Create monospaced font using userFixedPitchFontOfSize for compatibility
+        // This is more widely supported than monospacedSystemFontOfSize_weight
+        let mono_font = NSFont::userFixedPitchFontOfSize(font_size)
+            .unwrap_or_else(|| NSFont::systemFontOfSize(font_size));
 
         // Apply the monospaced font to the range
         attr_string.addAttribute_value_range(NSFontAttributeName, &mono_font as &AnyObject, range);
@@ -446,10 +446,10 @@ fn apply_code_block(attr_string: &NSMutableAttributedString, range: NSRange) {
             NSFont::systemFontSize()
         };
 
-        // Apply monospace font
-        let mono_font = NSFont::monospacedSystemFontOfSize_weight(
-            font_size, 0.0, // Regular weight
-        );
+        // Apply monospace font using userFixedPitchFontOfSize for compatibility
+        // This is more widely supported than monospacedSystemFontOfSize_weight
+        let mono_font = NSFont::userFixedPitchFontOfSize(font_size)
+            .unwrap_or_else(|| NSFont::systemFontOfSize(font_size));
         attr_string.addAttribute_value_range(NSFontAttributeName, &mono_font as &AnyObject, range);
 
         // Apply light gray background color (RGB: 0.95, 0.95, 0.95)
