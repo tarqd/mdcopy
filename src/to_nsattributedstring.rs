@@ -602,10 +602,11 @@ fn render_table(
 
                     // Create NSTextTableBlock for this cell
                     let text_block = NSTextTableBlock::initWithTable_startingRow_rowSpan_startingColumn_columnSpan(
+                        NSTextTableBlock::alloc(),
                         &ns_table,
-                        row_idx,
+                        row_idx as isize,
                         1,
-                        col_idx,
+                        col_idx as isize,
                         1,
                     );
 
@@ -614,8 +615,8 @@ fn render_table(
                         // Set border width (1.0 point)
                         text_block.setWidth_type_forLayer(
                             1.0,
-                            objc2_app_kit::NSTextBlockValueType::NSTextBlockAbsoluteValueType,
-                            objc2_app_kit::NSTextBlockLayer::NSTextBlockBorder,
+                            objc2_app_kit::NSTextBlockValueType::AbsoluteValueType,
+                            objc2_app_kit::NSTextBlockLayer::Border,
                         );
 
                         // Set border color (light gray)
@@ -626,8 +627,8 @@ fn render_table(
                         // Set padding (4.0 points)
                         text_block.setWidth_type_forLayer(
                             4.0,
-                            objc2_app_kit::NSTextBlockValueType::NSTextBlockAbsoluteValueType,
-                            objc2_app_kit::NSTextBlockLayer::NSTextBlockPadding,
+                            objc2_app_kit::NSTextBlockValueType::AbsoluteValueType,
+                            objc2_app_kit::NSTextBlockLayer::Padding,
                         );
                     }
 
