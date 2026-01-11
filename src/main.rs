@@ -386,6 +386,12 @@ fn main() -> io::Result<()> {
                 ClipboardFormat::Markdown => {
                     markdown_output.as_ref().expect("Markdown output missing")
                 }
+                #[cfg(target_os = "macos")]
+                ClipboardFormat::Native => {
+                    unreachable!(
+                        "Native format is validated earlier to not be used for file output"
+                    )
+                }
             };
             io::stdout().write_all(output.as_bytes())?;
         }
@@ -395,6 +401,12 @@ fn main() -> io::Result<()> {
                 ClipboardFormat::Rtf => rtf_output.as_ref().expect("RTF output missing"),
                 ClipboardFormat::Markdown => {
                     markdown_output.as_ref().expect("Markdown output missing")
+                }
+                #[cfg(target_os = "macos")]
+                ClipboardFormat::Native => {
+                    unreachable!(
+                        "Native format is validated earlier to not be used for file output"
+                    )
                 }
             };
             fs::write(path, output)?;
