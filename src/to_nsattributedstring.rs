@@ -60,10 +60,7 @@ use objc2_app_kit::{
     NSImage, NSLinkAttributeName, NSParagraphStyleAttributeName, NSPasteboard,
     NSStrikethroughStyleAttributeName, NSTextAttachment,
 };
-use objc2_foundation::{
-    NSAttributedString, NSAttributedStringKey, NSData, NSMutableAttributedString, NSNumber,
-    NSRange, NSString, NSURL,
-};
+use objc2_foundation::{NSAttributedString, NSMutableAttributedString, NSRange, NSString, NSURL};
 
 /// Convert markdown AST to NSMutableAttributedString
 ///
@@ -211,7 +208,7 @@ fn node_to_attributed_string(
                 node_to_attributed_string(child, attr_string, ctx)?;
             }
         }
-        Node::BlockQuote(quote) => {
+        Node::Blockquote(quote) => {
             let start_len = attr_string.length();
             for child in &quote.children {
                 node_to_attributed_string(child, attr_string, ctx)?;
@@ -392,7 +389,10 @@ fn apply_link(attr_string: &NSMutableAttributedString, range: NSRange, url: &str
 fn apply_strikethrough(attr_string: &NSMutableAttributedString, range: NSRange) {
     unsafe {
         // NSUnderlineStyleSingle = 1
-        let style = objc2_foundation::NSNumber::numberWithInt(1);
+        // We need to box the value to pass it as an object
+        use objc2::rc::Retained;
+        use objc2_foundation::NSNumber;
+        let style: Retained<NSNumber> = NSNumber::new_i32(1);
 
         // Apply strikethrough style
         attr_string.addAttribute_value_range(
