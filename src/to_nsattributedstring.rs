@@ -15,6 +15,7 @@
 //!
 //! ### TODO:
 //! - [x] ~~Bold formatting~~ **DONE!**
+//! - [x] ~~Italic formatting~~ **DONE!**
 //! - [x] ~~Headings~~ **DONE!**
 //! - [x] ~~NSTextAttachment for images~~ **DONE!**
 //! - [x] ~~Monospace font for inline code~~ **DONE!**
@@ -23,13 +24,13 @@
 //! - [x] ~~Code blocks with background color~~ **DONE!**
 //! - [x] ~~Lists (basic bullet points)~~ **DONE!**
 //! - [x] ~~Blockquotes (gray text)~~ **DONE!**
-//! - [ ] Italic formatting (requires NSFontDescriptor with symbolic traits - complex, low priority)
 //! - [ ] NSTextTable for markdown tables (complex, would require significant NSTextTable API work)
 //! - [ ] Advanced paragraph styles (indentation, spacing)
 //!
 //! ### Implemented Features:
 //! - **Image embedding** ✅: Both local and remote images via NSTextAttachment
 //! - **Bold text** ✅: Using `NSFont::boldSystemFontOfSize()`
+//! - **Italic text** ✅: Using `NSFontDescriptor` with `NSFontItalicTrait`
 //! - **Headings** ✅: Scaled fonts (H1=2x, H2=1.5x, H3=1.17x) with bold weight
 //! - **Inline code** ✅: Monospaced font via `NSFont::monospacedSystemFontOfSize_weight()`
 //! - **Code blocks** ✅: Monospace font + light gray background (RGB: 0.95, 0.95, 0.95)
@@ -50,19 +51,18 @@ use log::{debug, warn};
 use markdown::mdast::Node;
 use std::path::Path;
 
+use objc2::ClassType;
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
-use objc2::ClassType;
-use objc2_foundation::{
-    NSAttributedString, NSMutableAttributedString, NSString, NSData, NSURL, NSRange,
-    NSAttributedStringKey, NSNumber,
-};
 use objc2_app_kit::{
-    NSPasteboard, NSTextAttachment, NSImage, NSFont, NSColor,
-    NSAttributedStringAttachmentConveniences,
-    NSFontAttributeName, NSParagraphStyleAttributeName,
-    NSLinkAttributeName, NSStrikethroughStyleAttributeName,
-    NSBackgroundColorAttributeName, NSForegroundColorAttributeName,
+    NSAttributedStringAttachmentConveniences, NSBackgroundColorAttributeName, NSColor, NSFont,
+    NSFontAttributeName, NSFontDescriptor, NSFontItalicTrait, NSForegroundColorAttributeName,
+    NSImage, NSLinkAttributeName, NSParagraphStyleAttributeName, NSPasteboard,
+    NSStrikethroughStyleAttributeName, NSTextAttachment,
+};
+use objc2_foundation::{
+    NSAttributedString, NSAttributedStringKey, NSData, NSMutableAttributedString, NSNumber,
+    NSRange, NSString, NSURL,
 };
 
 /// Convert markdown AST to NSMutableAttributedString
@@ -90,9 +90,7 @@ pub fn mdast_to_nsattributed_string(
 ///
 /// This writes the attributed string directly to NSPasteboard, allowing macOS apps
 /// to get rich text with embedded images when pasting.
-pub fn write_to_pasteboard(
-    attr_string: &NSAttributedString,
-) -> Result<(), String> {
+pub fn write_to_pasteboard(attr_string: &NSAttributedString) -> Result<(), String> {
     autoreleasepool(|_| {
         let pasteboard = NSPasteboard::generalPasteboard();
         pasteboard.clearContents();
@@ -223,7 +221,10 @@ fn node_to_attributed_string(
         }
         // TODO: Implement tables (NSTextTable is complex)
         _ => {
-            warn!("Unhandled node type in NSAttributedString conversion: {:?}", std::any::type_name_of_val(node));
+            warn!(
+                "Unhandled node type in NSAttributedString conversion: {:?}",
+                std::any::type_name_of_val(node)
+            );
         }
     }
     Ok(())
@@ -232,10 +233,7 @@ fn node_to_attributed_string(
 /// Append plain text to attributed string
 fn append_text(attr_string: &NSMutableAttributedString, text: &str) {
     let ns_string = NSString::from_str(text);
-    let append_string = NSAttributedString::initWithString(
-        NSAttributedString::alloc(),
-        &ns_string
-    );
+    let append_string = NSAttributedString::initWithString(NSAttributedString::alloc(), &ns_string);
     attr_string.appendAttributedString(&append_string);
 }
 
@@ -243,11 +241,8 @@ fn append_text(attr_string: &NSMutableAttributedString, text: &str) {
 fn apply_bold(attr_string: &NSMutableAttributedString, range: NSRange) {
     unsafe {
         // Get the current font or use system font
-        let current_font = attr_string.attribute_atIndex_effectiveRange(
-            NSFontAttributeName,
-            range.location,
-            None,
-        );
+        let current_font =
+            attr_string.attribute_atIndex_effectiveRange(NSFontAttributeName, range.location, None);
 
         let font_size = if let Some(font_obj) = current_font {
             // Try to get the current font and its size
@@ -264,28 +259,55 @@ fn apply_bold(attr_string: &NSMutableAttributedString, range: NSRange) {
         let bold_font = NSFont::boldSystemFontOfSize(font_size);
 
         // Apply the bold font to the range
-        attr_string.addAttribute_value_range(
-            NSFontAttributeName,
-            &bold_font as &AnyObject,
-            range,
-        );
+        attr_string.addAttribute_value_range(NSFontAttributeName, &bold_font as &AnyObject, range);
     }
 }
 
 /// Apply italic formatting to a range
 ///
-/// Note: True italic requires NSFontDescriptor with symbolic traits,
-/// which is complex. For now, we'll log that it's not implemented.
-/// Most paste destinations handle this via HTML/RTF fallback.
+/// Uses NSFontDescriptor with symbolic traits to create an italic font.
 fn apply_italic(attr_string: &NSMutableAttributedString, range: NSRange) {
-    // TODO: Implement italic using NSFontDescriptor with NSFontSymbolicTraits
-    // This requires:
-    // 1. Get current font
-    // 2. Get its font descriptor
-    // 3. Create new descriptor with italic trait added
-    // 4. Create font from descriptor
-    // 5. Apply to range
-    debug!("apply_italic not yet implemented (requires NSFontDescriptor with traits)");
+    unsafe {
+        // Get the current font or use system font
+        let current_font =
+            attr_string.attribute_atIndex_effectiveRange(NSFontAttributeName, range.location, None);
+
+        let (base_font, font_size) = if let Some(font_obj) = current_font {
+            if let Some(font) = font_obj.downcast_ref::<NSFont>() {
+                (Some(font.clone()), font.pointSize())
+            } else {
+                (None, NSFont::systemFontSize())
+            }
+        } else {
+            (None, NSFont::systemFontSize())
+        };
+
+        // Get the font descriptor from current font or create a new one
+        let descriptor = if let Some(font) = base_font {
+            font.fontDescriptor()
+        } else {
+            let system_font = NSFont::systemFontOfSize(font_size);
+            system_font.fontDescriptor()
+        };
+
+        // Get current symbolic traits and add italic trait
+        let current_traits = descriptor.symbolicTraits();
+        let italic_traits = current_traits | NSFontItalicTrait;
+
+        // Create new descriptor with italic trait
+        let italic_descriptor = descriptor.fontDescriptorWithSymbolicTraits(italic_traits);
+
+        // Create font from the italic descriptor
+        let italic_font = NSFont::fontWithDescriptor_size(&italic_descriptor, font_size)
+            .unwrap_or_else(|| NSFont::systemFontOfSize(font_size));
+
+        // Apply the italic font to the range
+        attr_string.addAttribute_value_range(
+            NSFontAttributeName,
+            &italic_font as &AnyObject,
+            range,
+        );
+    }
 }
 
 /// Apply heading formatting to a range
@@ -300,10 +322,10 @@ fn apply_heading(attr_string: &NSMutableAttributedString, range: NSRange, depth:
         let base_size = NSFont::systemFontSize();
 
         let heading_size = match depth {
-            1 => base_size * 2.0,    // H1: 2em
-            2 => base_size * 1.5,    // H2: 1.5em
-            3 => base_size * 1.17,   // H3: 1.17em
-            _ => base_size,          // H4-H6: 1em
+            1 => base_size * 2.0,  // H1: 2em
+            2 => base_size * 1.5,  // H2: 1.5em
+            3 => base_size * 1.17, // H3: 1.17em
+            _ => base_size,        // H4-H6: 1em
         };
 
         // Use bold font for headings
@@ -324,11 +346,8 @@ fn apply_heading(attr_string: &NSMutableAttributedString, range: NSRange, depth:
 fn apply_monospace(attr_string: &NSMutableAttributedString, range: NSRange) {
     unsafe {
         // Get current font size or use system default
-        let current_font = attr_string.attribute_atIndex_effectiveRange(
-            NSFontAttributeName,
-            range.location,
-            None,
-        );
+        let current_font =
+            attr_string.attribute_atIndex_effectiveRange(NSFontAttributeName, range.location, None);
 
         let font_size = if let Some(font_obj) = current_font {
             if let Some(current_font) = font_obj.downcast_ref::<NSFont>() {
@@ -342,16 +361,11 @@ fn apply_monospace(attr_string: &NSMutableAttributedString, range: NSRange) {
 
         // Create monospaced font
         let mono_font = NSFont::monospacedSystemFontOfSize_weight(
-            font_size,
-            0.0, // Regular weight (NSFontWeightRegular = 0.0)
+            font_size, 0.0, // Regular weight (NSFontWeightRegular = 0.0)
         );
 
         // Apply the monospaced font to the range
-        attr_string.addAttribute_value_range(
-            NSFontAttributeName,
-            &mono_font as &AnyObject,
-            range,
-        );
+        attr_string.addAttribute_value_range(NSFontAttributeName, &mono_font as &AnyObject, range);
     }
 }
 
@@ -395,11 +409,8 @@ fn apply_strikethrough(attr_string: &NSMutableAttributedString, range: NSRange) 
 fn apply_code_block(attr_string: &NSMutableAttributedString, range: NSRange) {
     unsafe {
         // Get current or default font size
-        let current_font = attr_string.attribute_atIndex_effectiveRange(
-            NSFontAttributeName,
-            range.location,
-            None,
-        );
+        let current_font =
+            attr_string.attribute_atIndex_effectiveRange(NSFontAttributeName, range.location, None);
 
         let font_size = if let Some(font_obj) = current_font {
             if let Some(current_font) = font_obj.downcast_ref::<NSFont>() {
@@ -413,14 +424,9 @@ fn apply_code_block(attr_string: &NSMutableAttributedString, range: NSRange) {
 
         // Apply monospace font
         let mono_font = NSFont::monospacedSystemFontOfSize_weight(
-            font_size,
-            0.0, // Regular weight
+            font_size, 0.0, // Regular weight
         );
-        attr_string.addAttribute_value_range(
-            NSFontAttributeName,
-            &mono_font as &AnyObject,
-            range,
-        );
+        attr_string.addAttribute_value_range(NSFontAttributeName, &mono_font as &AnyObject, range);
 
         // Apply light gray background color (RGB: 0.95, 0.95, 0.95)
         let bg_color = NSColor::colorWithRed_green_blue_alpha(0.95, 0.95, 0.95, 1.0);
@@ -497,9 +503,8 @@ fn embed_image(
         }
 
         // Create attributed string from attachment
-        let attachment_string = unsafe {
-            NSAttributedString::attributedStringWithAttachment(&attachment)
-        };
+        let attachment_string =
+            unsafe { NSAttributedString::attributedStringWithAttachment(&attachment) };
 
         // Append to the main attributed string
         attr_string.appendAttributedString(&attachment_string);
@@ -542,6 +547,20 @@ mod tests {
     #[test]
     fn test_bold_text() {
         let ast = parse_markdown("**bold**");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_italic_text() {
+        let ast = parse_markdown("*italic*");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bold_italic() {
+        let ast = parse_markdown("***bold and italic***");
         let result = mdast_to_nsattributed_string(&ast, Path::new("."));
         assert!(result.is_ok());
     }
