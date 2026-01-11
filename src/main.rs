@@ -170,7 +170,13 @@ struct Args {
     #[arg(short, long)]
     quiet: bool,
 
-    /// Output format(s): html, rtf, markdown (comma-separated for clipboard, single for file output)
+    /// Output format(s): html, rtf, markdown, native (comma-separated for clipboard, single for file output)
+    ///
+    /// Available formats:
+    ///   - html: HTML format with embedded images
+    ///   - rtf: Rich Text Format with embedded images
+    ///   - markdown: Plain markdown with embedded data URLs
+    ///   - native: NSAttributedString (macOS only, clipboard only)
     #[arg(short, long)]
     format: Option<String>,
 }
