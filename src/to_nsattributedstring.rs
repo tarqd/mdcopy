@@ -619,26 +619,23 @@ fn render_table(
                     );
 
                     // Configure cell borders and padding
-                    unsafe {
-                        // Set border width (1.0 point)
-                        text_block.setWidth_type_forLayer(
-                            1.0,
-                            objc2_app_kit::NSTextBlockValueType::AbsoluteValueType,
-                            objc2_app_kit::NSTextBlockLayer::Border,
-                        );
+                    // Set border width (1.0 point)
+                    text_block.setWidth_type_forLayer(
+                        1.0,
+                        objc2_app_kit::NSTextBlockValueType::AbsoluteValueType,
+                        objc2_app_kit::NSTextBlockLayer::Border,
+                    );
 
-                        // Set border color (light gray)
-                        let border_color =
-                            NSColor::colorWithRed_green_blue_alpha(0.8, 0.8, 0.8, 1.0);
-                        text_block.setBorderColor(Some(&border_color));
+                    // Set border color (light gray)
+                    let border_color = NSColor::colorWithRed_green_blue_alpha(0.8, 0.8, 0.8, 1.0);
+                    text_block.setBorderColor(Some(&border_color));
 
-                        // Set padding (4.0 points)
-                        text_block.setWidth_type_forLayer(
-                            4.0,
-                            objc2_app_kit::NSTextBlockValueType::AbsoluteValueType,
-                            objc2_app_kit::NSTextBlockLayer::Padding,
-                        );
-                    }
+                    // Set padding (4.0 points)
+                    text_block.setWidth_type_forLayer(
+                        4.0,
+                        objc2_app_kit::NSTextBlockValueType::AbsoluteValueType,
+                        objc2_app_kit::NSTextBlockLayer::Padding,
+                    );
 
                     // Create paragraph style with the table block
                     let paragraph_style = NSMutableParagraphStyle::new();
@@ -647,12 +644,14 @@ fn render_table(
                     paragraph_style.setTextBlocks(&blocks_array);
 
                     // Apply paragraph style to the entire cell content
-                    let full_range = NSRange::new(0, cell_string.length());
-                    cell_string.addAttribute_value_range(
-                        NSParagraphStyleAttributeName,
-                        &paragraph_style as &AnyObject,
-                        full_range,
-                    );
+                    unsafe {
+                        let full_range = NSRange::new(0, cell_string.length());
+                        cell_string.addAttribute_value_range(
+                            NSParagraphStyleAttributeName,
+                            &paragraph_style as &AnyObject,
+                            full_range,
+                        );
+                    }
 
                     // Append cell to main attributed string
                     attr_string.appendAttributedString(&cell_string);
