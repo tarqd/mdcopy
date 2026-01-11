@@ -24,8 +24,9 @@
 //! - [x] ~~Code blocks with background color~~ **DONE!**
 //! - [x] ~~Lists (basic bullet points)~~ **DONE!**
 //! - [x] ~~Blockquotes (gray text)~~ **DONE!**
-//! - [ ] NSTextTable for markdown tables (complex, would require significant NSTextTable API work)
+//! - [x] ~~NSTextTable for markdown tables~~ **DONE!**
 //! - [ ] Advanced paragraph styles (indentation, spacing)
+//! - [ ] Table column alignment (left/center/right)
 //!
 //! ### Implemented Features:
 //! - **Image embedding** ✅: Both local and remote images via NSTextAttachment
@@ -38,6 +39,7 @@
 //! - **Strikethrough** ✅: Using `NSStrikethroughStyleAttributeName`
 //! - **Lists** ✅: Bullet points (• character) for unordered lists
 //! - **Blockquotes** ✅: Gray text color (RGB: 0.5, 0.5, 0.5)
+//! - **Tables** ✅: Using `NSTextTable` and `NSTextTableBlock` with borders and padding
 //!
 //! ### References:
 //! - NSAttributedString: https://developer.apple.com/documentation/foundation/nsattributedstring
@@ -57,8 +59,10 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_app_kit::{
     NSAttributedStringAttachmentConveniences, NSBackgroundColorAttributeName, NSColor, NSFont,
     NSFontAttributeName, NSFontDescriptorSymbolicTraits, NSFontItalicTrait,
-    NSForegroundColorAttributeName, NSImage, NSLinkAttributeName, NSPasteboard,
-    NSPasteboardWriting, NSStrikethroughStyleAttributeName, NSTextAttachment,
+    NSForegroundColorAttributeName, NSImage, NSLinkAttributeName, NSMutableParagraphStyle,
+    NSParagraphStyleAttributeName, NSPasteboard, NSPasteboardWriting,
+    NSStrikethroughStyleAttributeName, NSTextAttachment, NSTextBlock, NSTextTable,
+    NSTextTableBlock,
 };
 use objc2_foundation::{NSAttributedString, NSMutableAttributedString, NSRange, NSString, NSURL};
 
@@ -219,7 +223,12 @@ fn node_to_attributed_string(
             let range = NSRange::new(start_len, attr_string.length() - start_len);
             apply_blockquote(attr_string, range);
         }
-        // TODO: Implement tables (NSTextTable is complex)
+        Node::Table(table) => {
+            render_table(attr_string, table, ctx)?;
+        }
+        Node::TableRow(_) | Node::TableCell(_) => {
+            // These are handled by render_table, should not be encountered directly
+        }
         _ => {
             warn!(
                 "Unhandled node type in NSAttributedString conversion: {:?}",
@@ -537,6 +546,118 @@ fn embed_image(
     Ok(())
 }
 
+/// Render a table using NSTextTable and NSTextTableBlock
+///
+/// This uses the NSTextTable API to create proper table layouts. Each cell gets
+/// its own NSTextTableBlock which is attached to the text via NSParagraphStyle.
+/// Cell content is recursively rendered, so all formatting (bold, italic, code, etc.)
+/// works inside table cells.
+fn render_table(
+    attr_string: &NSMutableAttributedString,
+    table: &markdown::mdast::Table,
+    ctx: &mut AttributedStringContext,
+) -> Result<(), String> {
+    use markdown::mdast::Node;
+
+    // Determine number of columns from first row
+    let num_columns = if let Some(Node::TableRow(first_row)) = table.children.first() {
+        first_row.children.len()
+    } else {
+        return Ok(()); // Empty table
+    };
+
+    // Create NSTextTable
+    let ns_table = NSTextTable::new();
+    ns_table.setNumberOfColumns(num_columns);
+
+    // Add a newline before table if there's existing content
+    if attr_string.length() > 0 {
+        append_text(attr_string, "\n");
+    }
+
+    // Render each row
+    for (row_idx, row_node) in table.children.iter().enumerate() {
+        if let Node::TableRow(row) = row_node {
+            let is_header = row_idx == 0;
+
+            // Render each cell in the row
+            for (col_idx, cell_node) in row.children.iter().enumerate() {
+                if let Node::TableCell(cell) = cell_node {
+                    // Create a temporary attributed string for cell content
+                    let cell_string = NSMutableAttributedString::new();
+
+                    // Recursively render cell contents (handles bold, italic, code, etc.)
+                    for child in &cell.children {
+                        node_to_attributed_string(child, &cell_string, ctx)?;
+                    }
+
+                    // Add newline at end of cell content (required by NSTextTable)
+                    append_text(&cell_string, "\n");
+
+                    // Apply bold to header cells
+                    if is_header && cell_string.length() > 0 {
+                        let range = NSRange::new(0, cell_string.length() - 1); // Exclude the newline
+                        apply_bold(&cell_string, range);
+                    }
+
+                    // Create NSTextTableBlock for this cell
+                    let text_block = NSTextTableBlock::initWithTable_startingRow_rowSpan_startingColumn_columnSpan(
+                        &ns_table,
+                        row_idx,
+                        1,
+                        col_idx,
+                        1,
+                    );
+
+                    // Configure cell borders and padding
+                    unsafe {
+                        // Set border width (1.0 point)
+                        text_block.setWidth_type_forLayer(
+                            1.0,
+                            objc2_app_kit::NSTextBlockValueType::NSTextBlockAbsoluteValueType,
+                            objc2_app_kit::NSTextBlockLayer::NSTextBlockBorder,
+                        );
+
+                        // Set border color (light gray)
+                        let border_color =
+                            NSColor::colorWithRed_green_blue_alpha(0.8, 0.8, 0.8, 1.0);
+                        text_block.setBorderColor(Some(&border_color));
+
+                        // Set padding (4.0 points)
+                        text_block.setWidth_type_forLayer(
+                            4.0,
+                            objc2_app_kit::NSTextBlockValueType::NSTextBlockAbsoluteValueType,
+                            objc2_app_kit::NSTextBlockLayer::NSTextBlockPadding,
+                        );
+                    }
+
+                    // Create paragraph style with the table block
+                    let paragraph_style = NSMutableParagraphStyle::new();
+                    let blocks_array =
+                        objc2_foundation::NSArray::from_slice(&[&text_block as &NSTextBlock]);
+                    paragraph_style.setTextBlocks(&blocks_array);
+
+                    // Apply paragraph style to the entire cell content
+                    let full_range = NSRange::new(0, cell_string.length());
+                    cell_string.addAttribute_value_range(
+                        NSParagraphStyleAttributeName,
+                        &paragraph_style as &AnyObject,
+                        full_range,
+                    );
+
+                    // Append cell to main attributed string
+                    attr_string.appendAttributedString(&cell_string);
+                }
+            }
+        }
+    }
+
+    // Add newline after table
+    append_text(attr_string, "\n");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,6 +756,29 @@ mod tests {
     #[test]
     fn test_blockquote() {
         let ast = parse_markdown("> This is a quote\n> with multiple lines");
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_table() {
+        let ast = parse_markdown(
+            "| Header 1 | Header 2 |\n\
+             |----------|----------|\n\
+             | Cell 1   | Cell 2   |\n\
+             | Cell 3   | Cell 4   |",
+        );
+        let result = mdast_to_nsattributed_string(&ast, Path::new("."));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_table_with_formatting() {
+        let ast = parse_markdown(
+            "| **Bold** | *Italic* |\n\
+             |----------|----------|\n\
+             | `code`   | [link](url) |",
+        );
         let result = mdast_to_nsattributed_string(&ast, Path::new("."));
         assert!(result.is_ok());
     }
