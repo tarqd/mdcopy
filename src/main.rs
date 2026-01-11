@@ -2,6 +2,8 @@ mod config;
 mod highlight;
 mod image;
 mod to_html;
+#[cfg(target_os = "macos")]
+mod to_nsattributedstring;
 mod to_rtf;
 
 use clap::{Parser, ValueEnum};
