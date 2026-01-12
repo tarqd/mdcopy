@@ -232,6 +232,7 @@ fn default_language_mappings() -> HashMap<String, String> {
 }
 
 /// Get the XDG config directory ($XDG_CONFIG_HOME or ~/.config)
+#[cfg(target_os = "macos")]
 fn xdg_config_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
