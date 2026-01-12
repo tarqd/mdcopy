@@ -21,7 +21,8 @@ pub struct FileHighlightConfig {
 pub struct FileImageEmbedConfig {
     pub local: Option<bool>,
     pub remote: Option<bool>,
-    pub optimize: Option<bool>,
+    pub optimize_local: Option<bool>,
+    pub optimize_remote: Option<bool>,
     pub max_dimension: Option<u32>,
     pub quality: Option<u8>,
 }
@@ -75,7 +76,8 @@ impl Default for HighlightConfig {
 pub struct ImageConfig {
     pub embed_local: bool,
     pub embed_remote: bool,
-    pub optimize: bool,
+    pub optimize_local: bool,
+    pub optimize_remote: bool,
     pub max_dimension: u32,
     pub quality: u8,
 }
@@ -85,10 +87,106 @@ impl Default for ImageConfig {
         Self {
             embed_local: true,
             embed_remote: false,
-            optimize: true,
+            optimize_local: true,
+            optimize_remote: false,
             max_dimension: 1200,
             quality: 80,
         }
+    }
+}
+
+/// Source of a configuration value
+#[derive(Debug, Clone)]
+pub enum ConfigSource {
+    /// Default value
+    Default,
+    /// From config file
+    File(PathBuf),
+    /// From environment variable
+    Env(String),
+    /// From CLI argument
+    Cli,
+}
+
+impl std::fmt::Display for ConfigSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigSource::Default => write!(f, "default"),
+            ConfigSource::File(path) => write!(f, "config: {}", path.display()),
+            ConfigSource::Env(var) => write!(f, "env: {}", var),
+            ConfigSource::Cli => write!(f, "cli"),
+        }
+    }
+}
+
+/// Tracks the source of each configuration value
+#[derive(Debug, Clone)]
+pub struct ConfigSources {
+    pub embed_local: ConfigSource,
+    pub embed_remote: ConfigSource,
+    pub optimize_local: ConfigSource,
+    pub optimize_remote: ConfigSource,
+    pub max_dimension: ConfigSource,
+    pub quality: ConfigSource,
+    pub strict: ConfigSource,
+    pub highlight_enable: ConfigSource,
+    pub highlight_theme: ConfigSource,
+}
+
+impl Default for ConfigSources {
+    fn default() -> Self {
+        Self {
+            embed_local: ConfigSource::Default,
+            embed_remote: ConfigSource::Default,
+            optimize_local: ConfigSource::Default,
+            optimize_remote: ConfigSource::Default,
+            max_dimension: ConfigSource::Default,
+            quality: ConfigSource::Default,
+            strict: ConfigSource::Default,
+            highlight_enable: ConfigSource::Default,
+            highlight_theme: ConfigSource::Default,
+        }
+    }
+}
+
+impl ConfigSources {
+    /// Format current settings with their sources for display (used in --help)
+    pub fn format_settings(&self, config: &Config) -> String {
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "  embed_local: {} ({})",
+            config.image.embed_local, self.embed_local
+        ));
+        lines.push(format!(
+            "  embed_remote: {} ({})",
+            config.image.embed_remote, self.embed_remote
+        ));
+        lines.push(format!(
+            "  optimize_local: {} ({})",
+            config.image.optimize_local, self.optimize_local
+        ));
+        lines.push(format!(
+            "  optimize_remote: {} ({})",
+            config.image.optimize_remote, self.optimize_remote
+        ));
+        lines.push(format!(
+            "  max_dimension: {} ({})",
+            config.image.max_dimension, self.max_dimension
+        ));
+        lines.push(format!(
+            "  quality: {} ({})",
+            config.image.quality, self.quality
+        ));
+        lines.push(format!("  strict: {} ({})", config.strict, self.strict));
+        lines.push(format!(
+            "  highlight: {} ({})",
+            config.highlight.enable, self.highlight_enable
+        ));
+        lines.push(format!(
+            "  highlight_theme: {} ({})",
+            config.highlight.theme, self.highlight_theme
+        ));
+        lines.join("\n")
     }
 }
 
@@ -227,7 +325,8 @@ pub struct CliHighlightArgs {
 pub struct CliImageArgs {
     pub embed_local: Option<bool>,
     pub embed_remote: Option<bool>,
-    pub optimize: Option<bool>,
+    pub optimize_local: Option<bool>,
+    pub optimize_remote: Option<bool>,
     pub max_dimension: Option<u32>,
     pub quality: Option<u8>,
 }
@@ -265,15 +364,25 @@ impl HighlightConfig {
 
 impl Config {
     /// Build configuration with precedence: CLI > env vars > config file > defaults
+    /// Returns the config along with source tracking for each value
     #[allow(clippy::field_reassign_with_default)]
-    pub fn build(cli: CliArgs, config_path: Option<PathBuf>) -> Self {
+    pub fn build(cli: CliArgs, config_path: Option<PathBuf>) -> (Self, ConfigSources) {
         let mut config = Config::default();
+        let mut sources = ConfigSources::default();
 
-        // Load config file (lowest priority after defaults)
-        let file_config = config_path
-            .or_else(default_config_path)
-            .and_then(|p| load_config_file(&p))
-            .unwrap_or_default();
+        // Determine which config file to use and load it
+        let resolved_config_path = config_path.or_else(default_config_path);
+        let (file_config, config_file_path) = resolved_config_path
+            .and_then(|p| load_config_file(&p).map(|c| (c, p)))
+            .map(|(c, p)| (c, Some(p)))
+            .unwrap_or((FileConfig::default(), None));
+
+        // Helper to create file source
+        let file_source = |path: &Option<PathBuf>| -> ConfigSource {
+            path.as_ref()
+                .map(|p| ConfigSource::File(p.clone()))
+                .unwrap_or(ConfigSource::Default)
+        };
 
         // Apply config file values
         if let Some(v) = file_config.input {
@@ -285,16 +394,19 @@ impl Config {
         if let Some(v) = file_config.root {
             config.root = Some(PathBuf::from(v));
         }
-        if let Some(v) = file_config.strict {
-            config.strict = v;
+        if file_config.strict.is_some() {
+            config.strict = file_config.strict.unwrap();
+            sources.strict = file_source(&config_file_path);
         }
 
         // Apply highlight config from file
-        if let Some(v) = file_config.highlight.enable {
-            config.highlight.enable = v;
+        if file_config.highlight.enable.is_some() {
+            config.highlight.enable = file_config.highlight.enable.unwrap();
+            sources.highlight_enable = file_source(&config_file_path);
         }
-        if let Some(v) = file_config.highlight.theme {
-            config.highlight.theme = v;
+        if file_config.highlight.theme.is_some() {
+            config.highlight.theme = file_config.highlight.theme.unwrap();
+            sources.highlight_theme = file_source(&config_file_path);
         }
         if let Some(v) = file_config.highlight.themes_dir {
             config.highlight.themes_dir = Some(PathBuf::from(v));
@@ -307,20 +419,29 @@ impl Config {
         }
 
         // Apply image config from file
-        if let Some(v) = file_config.image.embed.local {
-            config.image.embed_local = v;
+        if file_config.image.embed.local.is_some() {
+            config.image.embed_local = file_config.image.embed.local.unwrap();
+            sources.embed_local = file_source(&config_file_path);
         }
-        if let Some(v) = file_config.image.embed.remote {
-            config.image.embed_remote = v;
+        if file_config.image.embed.remote.is_some() {
+            config.image.embed_remote = file_config.image.embed.remote.unwrap();
+            sources.embed_remote = file_source(&config_file_path);
         }
-        if let Some(v) = file_config.image.embed.optimize {
-            config.image.optimize = v;
+        if file_config.image.embed.optimize_local.is_some() {
+            config.image.optimize_local = file_config.image.embed.optimize_local.unwrap();
+            sources.optimize_local = file_source(&config_file_path);
         }
-        if let Some(v) = file_config.image.embed.max_dimension {
-            config.image.max_dimension = v;
+        if file_config.image.embed.optimize_remote.is_some() {
+            config.image.optimize_remote = file_config.image.embed.optimize_remote.unwrap();
+            sources.optimize_remote = file_source(&config_file_path);
         }
-        if let Some(v) = file_config.image.embed.quality {
-            config.image.quality = v;
+        if file_config.image.embed.max_dimension.is_some() {
+            config.image.max_dimension = file_config.image.embed.max_dimension.unwrap();
+            sources.max_dimension = file_source(&config_file_path);
+        }
+        if file_config.image.embed.quality.is_some() {
+            config.image.quality = file_config.image.embed.quality.unwrap();
+            sources.quality = file_source(&config_file_path);
         }
 
         // Apply environment variables (higher priority than config file)
@@ -335,14 +456,17 @@ impl Config {
         }
         if let Some(v) = env_var("strict").and_then(|s| parse_bool(&s)) {
             config.strict = v;
+            sources.strict = ConfigSource::Env("MDCOPY_STRICT".to_string());
         }
 
         // Highlight env vars (MDCOPY_HIGHLIGHT_*)
         if let Some(v) = env_var("highlight").and_then(|s| parse_bool(&s)) {
             config.highlight.enable = v;
+            sources.highlight_enable = ConfigSource::Env("MDCOPY_HIGHLIGHT".to_string());
         }
         if let Some(v) = env_var("highlight_theme") {
             config.highlight.theme = v;
+            sources.highlight_theme = ConfigSource::Env("MDCOPY_HIGHLIGHT_THEME".to_string());
         }
         if let Some(v) = env_var("highlight_themes_dir") {
             config.highlight.themes_dir = Some(PathBuf::from(v));
@@ -354,18 +478,30 @@ impl Config {
         // Image env vars (MDCOPY_IMAGE_EMBED_*)
         if let Some(v) = env_var("image_embed_local").and_then(|s| parse_bool(&s)) {
             config.image.embed_local = v;
+            sources.embed_local = ConfigSource::Env("MDCOPY_IMAGE_EMBED_LOCAL".to_string());
         }
         if let Some(v) = env_var("image_embed_remote").and_then(|s| parse_bool(&s)) {
             config.image.embed_remote = v;
+            sources.embed_remote = ConfigSource::Env("MDCOPY_IMAGE_EMBED_REMOTE".to_string());
         }
-        if let Some(v) = env_var("image_embed_optimize").and_then(|s| parse_bool(&s)) {
-            config.image.optimize = v;
+        if let Some(v) = env_var("image_embed_optimize_local").and_then(|s| parse_bool(&s)) {
+            config.image.optimize_local = v;
+            sources.optimize_local =
+                ConfigSource::Env("MDCOPY_IMAGE_EMBED_OPTIMIZE_LOCAL".to_string());
+        }
+        if let Some(v) = env_var("image_embed_optimize_remote").and_then(|s| parse_bool(&s)) {
+            config.image.optimize_remote = v;
+            sources.optimize_remote =
+                ConfigSource::Env("MDCOPY_IMAGE_EMBED_OPTIMIZE_REMOTE".to_string());
         }
         if let Some(v) = env_var("image_embed_max_dimension").and_then(|s| s.parse().ok()) {
             config.image.max_dimension = v;
+            sources.max_dimension =
+                ConfigSource::Env("MDCOPY_IMAGE_EMBED_MAX_DIMENSION".to_string());
         }
         if let Some(v) = env_var("image_embed_quality").and_then(|s| s.parse().ok()) {
             config.image.quality = v;
+            sources.quality = ConfigSource::Env("MDCOPY_IMAGE_EMBED_QUALITY".to_string());
         }
 
         // Apply CLI arguments (highest priority)
@@ -380,14 +516,17 @@ impl Config {
         }
         if let Some(v) = cli.strict {
             config.strict = v;
+            sources.strict = ConfigSource::Cli;
         }
 
         // Highlight CLI args
         if let Some(v) = cli.highlight.enable {
             config.highlight.enable = v;
+            sources.highlight_enable = ConfigSource::Cli;
         }
         if let Some(v) = cli.highlight.theme {
             config.highlight.theme = v;
+            sources.highlight_theme = ConfigSource::Cli;
         }
         if let Some(v) = cli.highlight.themes_dir {
             config.highlight.themes_dir = Some(v);
@@ -399,21 +538,86 @@ impl Config {
         // Image CLI args
         if let Some(v) = cli.image.embed_local {
             config.image.embed_local = v;
+            sources.embed_local = ConfigSource::Cli;
         }
         if let Some(v) = cli.image.embed_remote {
             config.image.embed_remote = v;
+            sources.embed_remote = ConfigSource::Cli;
         }
-        if let Some(v) = cli.image.optimize {
-            config.image.optimize = v;
+        if let Some(v) = cli.image.optimize_local {
+            config.image.optimize_local = v;
+            sources.optimize_local = ConfigSource::Cli;
+        }
+        if let Some(v) = cli.image.optimize_remote {
+            config.image.optimize_remote = v;
+            sources.optimize_remote = ConfigSource::Cli;
         }
         if let Some(v) = cli.image.max_dimension {
             config.image.max_dimension = v;
+            sources.max_dimension = ConfigSource::Cli;
         }
         if let Some(v) = cli.image.quality {
             config.image.quality = v;
+            sources.quality = ConfigSource::Cli;
         }
 
-        config
+        (config, sources)
+    }
+
+    /// Output current configuration as TOML
+    pub fn to_toml(&self) -> String {
+        let input_line = if self.input.as_os_str() != "-" {
+            format!("input = {:?}\n", self.input.display().to_string())
+        } else {
+            String::new()
+        };
+        let output_line = self
+            .output
+            .as_ref()
+            .map(|p| format!("output = {:?}\n", p.display().to_string()))
+            .unwrap_or_default();
+        let root_line = self
+            .root
+            .as_ref()
+            .map(|p| format!("root = {:?}\n", p.display().to_string()))
+            .unwrap_or_default();
+        let themes_dir_line = self
+            .highlight
+            .themes_dir
+            .as_ref()
+            .map(|p| format!("themes_dir = {:?}\n", p.display().to_string()))
+            .unwrap_or_default();
+        let syntaxes_dir_line = self
+            .highlight
+            .syntaxes_dir
+            .as_ref()
+            .map(|p| format!("syntaxes_dir = {:?}\n", p.display().to_string()))
+            .unwrap_or_default();
+
+        format!(
+            "{input_line}{output_line}{root_line}strict = {strict}
+
+[highlight]
+enable = {highlight_enable}
+theme = {highlight_theme:?}
+{themes_dir_line}{syntaxes_dir_line}
+[image.embed]
+local = {embed_local}
+remote = {embed_remote}
+optimize_local = {optimize_local}
+optimize_remote = {optimize_remote}
+max_dimension = {max_dimension}
+quality = {quality}",
+            strict = self.strict,
+            highlight_enable = self.highlight.enable,
+            highlight_theme = self.highlight.theme,
+            embed_local = self.image.embed_local,
+            embed_remote = self.image.embed_remote,
+            optimize_local = self.image.optimize_local,
+            optimize_remote = self.image.optimize_remote,
+            max_dimension = self.image.max_dimension,
+            quality = self.image.quality,
+        )
     }
 }
 
@@ -438,7 +642,8 @@ mod tests {
             image: CliImageArgs {
                 embed_local: None,
                 embed_remote: None,
-                optimize: None,
+                optimize_local: None,
+                optimize_remote: None,
                 max_dimension: None,
                 quality: None,
             },
@@ -456,7 +661,8 @@ mod tests {
         assert_eq!(config.highlight.theme, "base16-ocean.dark");
         assert!(config.image.embed_local);
         assert!(!config.image.embed_remote);
-        assert!(config.image.optimize);
+        assert!(config.image.optimize_local);
+        assert!(!config.image.optimize_remote);
         assert_eq!(config.image.max_dimension, 1200);
         assert_eq!(config.image.quality, 80);
     }
@@ -567,7 +773,7 @@ mod tests {
     #[test]
     fn test_config_build_defaults() {
         let cli = empty_cli_args();
-        let config = Config::build(cli, None);
+        let (config, _sources) = Config::build(cli, None);
 
         assert_eq!(config.input, PathBuf::from("-"));
         assert!(config.output.is_none());
@@ -593,13 +799,14 @@ mod tests {
             image: CliImageArgs {
                 embed_local: Some(true),
                 embed_remote: Some(true),
-                optimize: Some(false),
+                optimize_local: Some(false),
+                optimize_remote: Some(false),
                 max_dimension: Some(800),
                 quality: Some(75),
             },
         };
 
-        let config = Config::build(cli, None);
+        let (config, sources) = Config::build(cli, None);
 
         assert_eq!(config.input, PathBuf::from("input.md"));
         assert_eq!(config.output, Some(PathBuf::from("output.html")));
@@ -614,9 +821,14 @@ mod tests {
             config.highlight.syntaxes_dir,
             Some(PathBuf::from("/syntaxes"))
         );
-        assert!(!config.image.optimize);
+        assert!(!config.image.optimize_local);
+        assert!(!config.image.optimize_remote);
         assert_eq!(config.image.max_dimension, 800);
         assert_eq!(config.image.quality, 75);
+
+        // Verify sources are tracked as CLI
+        assert!(matches!(sources.embed_local, ConfigSource::Cli));
+        assert!(matches!(sources.strict, ConfigSource::Cli));
     }
 
     #[test]
@@ -631,11 +843,15 @@ mod tests {
         writeln!(file, "theme = \"file-theme\"").unwrap();
 
         let cli = empty_cli_args();
-        let config = Config::build(cli, Some(config_path));
+        let (config, sources) = Config::build(cli, Some(config_path.clone()));
 
         assert_eq!(config.input, PathBuf::from("from-file.md"));
         assert!(config.strict);
         assert_eq!(config.highlight.theme, "file-theme");
+
+        // Verify sources are tracked as file
+        assert!(matches!(sources.strict, ConfigSource::File(ref p) if p == &config_path));
+        assert!(matches!(sources.highlight_theme, ConfigSource::File(_)));
     }
 
     #[test]
@@ -653,11 +869,14 @@ mod tests {
             ..empty_cli_args()
         };
 
-        let config = Config::build(cli, Some(config_path));
+        let (config, sources) = Config::build(cli, Some(config_path));
 
         // CLI should override file
         assert_eq!(config.input, PathBuf::from("from-cli.md"));
         assert!(!config.strict);
+
+        // Verify CLI overrode file source
+        assert!(matches!(sources.strict, ConfigSource::Cli));
     }
 
     #[test]
@@ -694,7 +913,8 @@ mod tests {
         assert!(config.highlight.enable.is_none());
         assert!(config.image.embed.local.is_none());
         assert!(config.image.embed.remote.is_none());
-        assert!(config.image.embed.optimize.is_none());
+        assert!(config.image.embed.optimize_local.is_none());
+        assert!(config.image.embed.optimize_remote.is_none());
         assert!(config.image.embed.max_dimension.is_none());
         assert!(config.image.embed.quality.is_none());
     }

@@ -19,3 +19,9 @@ toml = "0.9.11"
 ureq = "3.1.4"
 zune-core = "0.5"
 zune-image = "=0.5.0-rc0"
+
+# macOS-specific dependencies for native clipboard
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSAttributedString", "NSData", "NSString", "NSArray", "NSURL", "NSRange"] }
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSTextAttachment", "NSImage", "NSFont", "NSFontDescriptor", "NSColor", "NSAttributedString", "NSTextTable", "NSParagraphStyle"] }

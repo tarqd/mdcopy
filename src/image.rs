@@ -290,11 +290,14 @@ impl ImageCache {
             load_image_with_fallback(url, base_dir, image_config, strict)?
         };
 
-        // If optimization enabled, optimize and cache
-        // If no optimization but remote, we already cached the download
-        if image_config.optimize
-            && let Some(ref img) = original
-        {
+        // If optimization enabled for this image type, optimize and cache
+        let should_optimize = if is_remote_url(url) {
+            image_config.optimize_remote
+        } else {
+            image_config.optimize_local
+        };
+
+        if should_optimize && let Some(ref img) = original {
             return self.optimize_and_cache(url, img, image_config, strict);
         }
         Ok(original)
@@ -538,7 +541,8 @@ mod tests {
         ImageConfig {
             embed_local: true,
             embed_remote: false,
-            optimize: false,
+            optimize_local: false,
+            optimize_remote: false,
             max_dimension: 1200,
             quality: 80,
         }
@@ -548,7 +552,8 @@ mod tests {
         ImageConfig {
             embed_local: true,
             embed_remote: true,
-            optimize: false,
+            optimize_local: false,
+            optimize_remote: false,
             max_dimension: 1200,
             quality: 80,
         }
@@ -558,7 +563,8 @@ mod tests {
         ImageConfig {
             embed_local: false,
             embed_remote: false,
-            optimize: false,
+            optimize_local: false,
+            optimize_remote: false,
             max_dimension: 1200,
             quality: 80,
         }

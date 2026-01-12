@@ -481,7 +481,8 @@ mod tests {
         let image_config = crate::config::ImageConfig {
             embed_local: false,
             embed_remote: false,
-            optimize: false,
+            optimize_local: false,
+            optimize_remote: false,
             max_dimension: 1200,
             quality: 80,
         };
