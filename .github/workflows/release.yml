@@ -61,7 +61,8 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y musl-tools musl-dev
+          sudo ln -s /bin/g++ /bin/musl-g++
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
