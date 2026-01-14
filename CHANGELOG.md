@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.1] - 2026-01-14
+
+### Added
+- Image optimization with rimage for smaller embedded images
+- CLI improvements: `--[no-]` flags for boolean options, config source tracking, and `--show-config` command
+- Markdown output format (mdast to markdown conversion)
+
+### Fixed
+- Add cfg gate to xdg_config_dir for macOS only
+- Add nasm dependency in CI build
+
+### Changed
+- Consolidate image options under ImageConfig structure
+
 ## [0.2.1] - 2026-01-09
 
 ### Added
