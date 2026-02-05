@@ -43,6 +43,7 @@ pub struct FileConfig {
     pub output: Option<String>,
     pub root: Option<String>,
     pub strict: Option<bool>,
+    pub prosemirror: Option<bool>,
     #[serde(default)]
     pub highlight: FileHighlightConfig,
     #[serde(default)]
@@ -197,6 +198,8 @@ pub struct Config {
     pub output: Option<PathBuf>,
     pub root: Option<PathBuf>,
     pub strict: bool,
+    /// Emit ProseMirror slice marker for Confluence paste compatibility
+    pub prosemirror: bool,
     pub highlight: HighlightConfig,
     pub image: ImageConfig,
 }
@@ -208,6 +211,7 @@ impl Default for Config {
             output: None,
             root: None,
             strict: false,
+            prosemirror: true,
             highlight: HighlightConfig::default(),
             image: ImageConfig::default(),
         }
@@ -338,6 +342,7 @@ pub struct CliArgs {
     pub output: Option<PathBuf>,
     pub root: Option<PathBuf>,
     pub strict: Option<bool>,
+    pub prosemirror: Option<bool>,
     pub highlight: CliHighlightArgs,
     pub image: CliImageArgs,
 }
@@ -399,6 +404,9 @@ impl Config {
             config.strict = file_config.strict.unwrap();
             sources.strict = file_source(&config_file_path);
         }
+        if let Some(v) = file_config.prosemirror {
+            config.prosemirror = v;
+        }
 
         // Apply highlight config from file
         if file_config.highlight.enable.is_some() {
@@ -459,6 +467,9 @@ impl Config {
             config.strict = v;
             sources.strict = ConfigSource::Env("MDCOPY_STRICT".to_string());
         }
+        if let Some(v) = env_var("prosemirror").and_then(|s| parse_bool(&s)) {
+            config.prosemirror = v;
+        }
 
         // Highlight env vars (MDCOPY_HIGHLIGHT_*)
         if let Some(v) = env_var("highlight").and_then(|s| parse_bool(&s)) {
@@ -518,6 +529,9 @@ impl Config {
         if let Some(v) = cli.strict {
             config.strict = v;
             sources.strict = ConfigSource::Cli;
+        }
+        if let Some(v) = cli.prosemirror {
+            config.prosemirror = v;
         }
 
         // Highlight CLI args
@@ -634,6 +648,7 @@ mod tests {
             output: None,
             root: None,
             strict: None,
+            prosemirror: None,
             highlight: CliHighlightArgs {
                 enable: None,
                 theme: None,
@@ -791,6 +806,7 @@ mod tests {
             output: Some(PathBuf::from("output.html")),
             root: Some(PathBuf::from("/custom/root")),
             strict: Some(true),
+            prosemirror: None,
             highlight: CliHighlightArgs {
                 enable: Some(false),
                 theme: Some("custom".to_string()),

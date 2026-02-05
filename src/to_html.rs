@@ -13,8 +13,9 @@ pub fn mdast_to_html(
     strict: bool,
     highlight: Option<&HighlightContext>,
     image_cache: &ImageCache,
+    prosemirror: bool,
 ) -> Result<String, ImageError> {
-    let ctx = HtmlContext::new(base_dir, image_config, strict, highlight, image_cache);
+    let ctx = HtmlContext::new(base_dir, image_config, strict, highlight, image_cache, prosemirror);
     let mut html = String::new();
     node_to_html(node, &mut html, &ctx)?;
     Ok(html)
@@ -26,6 +27,8 @@ struct HtmlContext<'a> {
     strict: bool,
     highlight: Option<&'a HighlightContext>,
     image_cache: &'a ImageCache,
+    /// Emit ProseMirror slice marker for Confluence/ProseMirror paste compatibility
+    prosemirror: bool,
 }
 
 impl<'a> HtmlContext<'a> {
@@ -35,6 +38,7 @@ impl<'a> HtmlContext<'a> {
         strict: bool,
         highlight: Option<&'a HighlightContext>,
         image_cache: &'a ImageCache,
+        prosemirror: bool,
     ) -> Self {
         Self {
             base_dir,
@@ -42,6 +46,7 @@ impl<'a> HtmlContext<'a> {
             strict,
             highlight,
             image_cache,
+            prosemirror,
         }
     }
 }
@@ -49,6 +54,10 @@ impl<'a> HtmlContext<'a> {
 fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(), ImageError> {
     match node {
         Node::Root(root) => {
+            if ctx.prosemirror {
+                // Signals valid block-level paste to ProseMirror-based editors (Confluence)
+                html.push_str("<p data-pm-slice=\"1 1 []\"></p>");
+            }
             for child in &root.children {
                 node_to_html(child, html, ctx)?;
             }
@@ -90,6 +99,16 @@ fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(),
             html.push_str("</code>");
         }
         Node::Code(code) => {
+            // <pre data-language="..."> for ProseMirror/Confluence
+            // <code class="language-..."> for Google Docs
+            html.push_str("<pre");
+            if let Some(lang) = &code.lang {
+                html.push_str(&format!(
+                    " data-language=\"{}\"",
+                    html_escape(lang)
+                ));
+            }
+
             if let Some(hl) = ctx.highlight {
                 let syntax = code
                     .lang
@@ -105,11 +124,15 @@ fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(),
                     .map(|c| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b))
                     .unwrap_or_else(|| "#2b303b".to_string());
 
-                // Use a div with inline styles for better paste compatibility
                 html.push_str(&format!(
-                    "<div style=\"background-color:{}; padding:16px; font-family:monospace,monospace; font-size:14px; white-space:pre; border-radius:8px;\">",
+                    " style=\"background-color:{}; padding:16px; font-family:monospace,monospace; font-size:14px; border-radius:8px;\">",
                     bg_color
                 ));
+                html.push_str("<code");
+                if let Some(lang) = &code.lang {
+                    html.push_str(&format!(" class=\"language-{}\"", html_escape(lang)));
+                }
+                html.push('>');
 
                 let mut highlighter = HighlightLines::new(syntax, &hl.theme);
                 let lines: Vec<&str> = LinesWithEndings::from(&code.value).collect();
@@ -135,13 +158,13 @@ fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(),
                         html.push_str(&html_escape(line.trim_end_matches('\n')));
                     }
                     if i < lines.len() - 1 {
-                        html.push_str("<br>");
+                        html.push('\n');
                     }
                 }
 
-                html.push_str("</div>\n");
+                html.push_str("</code></pre>\n");
             } else {
-                html.push_str("<pre><code");
+                html.push_str("><code");
                 if let Some(lang) = &code.lang {
                     html.push_str(&format!(" class=\"language-{}\"", html_escape(lang)));
                 }
@@ -314,7 +337,7 @@ mod tests {
             max_dimension: 1200,
             quality: 80,
         };
-        mdast_to_html(&ast, Path::new("."), &image_config, false, None, &cache).unwrap()
+        mdast_to_html(&ast, Path::new("."), &image_config, false, None, &cache, false).unwrap()
     }
 
     #[test]
@@ -382,7 +405,26 @@ mod tests {
     #[test]
     fn test_code_block_with_language() {
         let html = render_html("```rust\nfn main() {}\n```");
+        // Google Docs: class="language-..." on <code>
         assert!(html.contains("class=\"language-rust\""));
+        // ProseMirror/Confluence: data-language on <pre>
+        assert!(html.contains("data-language=\"rust\""));
+    }
+
+    #[test]
+    fn test_prosemirror_slice_marker() {
+        let ast = parse_markdown("```js\nconsole.log('hello')\n```");
+        let cache = crate::image::ImageCache::new();
+        let image_config = crate::config::ImageConfig {
+            embed_local: false,
+            embed_remote: false,
+            optimize_local: false,
+            optimize_remote: false,
+            max_dimension: 1200,
+            quality: 80,
+        };
+        let html = mdast_to_html(&ast, Path::new("."), &image_config, false, None, &cache, true).unwrap();
+        assert!(html.starts_with("<p data-pm-slice=\"1 1 []\"></p>"));
     }
 
     #[test]
@@ -520,7 +562,7 @@ fn main() {}
         assert!(html.contains("<strong>bold</strong>"));
         assert!(html.contains("<em>italic</em>"));
         assert!(html.contains("<ul>"));
-        assert!(html.contains("<pre><code"));
+        assert!(html.contains("<pre ") && html.contains("<code"));
         assert!(html.contains("<blockquote>"));
     }
 }

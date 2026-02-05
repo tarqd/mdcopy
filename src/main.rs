@@ -75,6 +75,13 @@ struct Args {
     #[arg(short = 'S', long, overrides_with = "strict", hide = true)]
     no_strict: bool,
 
+    /// Emit ProseMirror slice marker for Confluence paste compatibility
+    #[arg(short = 'p', long, overrides_with = "no_prosemirror")]
+    prosemirror: bool,
+
+    #[arg(short = 'P', long, overrides_with = "prosemirror", hide = true)]
+    no_prosemirror: bool,
+
     /// Enable syntax highlighting
     #[arg(short = 'h', long, overrides_with = "no_highlight")]
     highlight: bool,
@@ -286,11 +293,19 @@ fn main() -> io::Result<()> {
         _ => None,
     };
 
+    // --prosemirror / --no-prosemirror
+    let prosemirror = match (args.prosemirror, args.no_prosemirror) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => None,
+    };
+
     let cli_args = CliArgs {
         input: args.input,
         output: args.output.clone(),
         root: args.root,
         strict,
+        prosemirror,
         highlight: CliHighlightArgs {
             enable: highlight,
             theme: args.highlight_theme,
@@ -323,7 +338,8 @@ fn main() -> io::Result<()> {
             .replace("-e, --embed", "-e, -E, --[no-]embed")
             .replace("-z, --optimize", "-z, -Z, --[no-]optimize")
             .replace("-s, --strict", "-s, -S, --[no-]strict")
-            .replace("-h, --highlight", "-h, -H, --[no-]highlight");
+            .replace("-h, --highlight", "-h, -H, --[no-]highlight")
+            .replace("-p, --prosemirror", "-p, -P, --[no-]prosemirror");
         println!("{help}");
         println!("\nCurrent settings:");
         println!("{}", sources.format_settings(&cfg));
@@ -429,6 +445,7 @@ fn main() -> io::Result<()> {
                 cfg.strict,
                 highlight_ctx.as_ref(),
                 &image_cache,
+                cfg.prosemirror,
             )
             .map_err(io::Error::other)?,
         )

@@ -7,18 +7,18 @@ Google Docs recognizes code blocks from HTML paste using `<pre><code>` structure
 ### Minimum Required HTML
 
 ```html
-<pre lang="javascript"><code>console.log('hello')</code></pre>
+<pre><code class="language-javascript">console.log('hello')</code></pre>
 ```
 
 **Both are required:**
-1. `lang` attribute on `<pre>` (sets the syntax highlighting language)
-2. `<code>` wrapper inside `<pre>`
+1. `class="language-..."` on `<code>` (sets the syntax highlighting language)
+2. `<pre>` wrapper around `<code>`
 
 ### What Doesn't Work
 - `data-language` on `<pre>` or `<code>` - ignored
-- `class="language-javascript"` - ignored
-- `lang` on `<code>` instead of `<pre>` - ignored
-- `<pre lang="...">` without `<code>` wrapper - no code block created
+- `lang` attribute on `<pre>` - ignored
+- `lang` attribute on `<code>` - ignored
+- `<pre>` without `<code>` wrapper - no code block created
 
 ## Native Clipboard Format
 
