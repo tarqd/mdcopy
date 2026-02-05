@@ -15,7 +15,14 @@ pub fn mdast_to_html(
     image_cache: &ImageCache,
     prosemirror: bool,
 ) -> Result<String, ImageError> {
-    let ctx = HtmlContext::new(base_dir, image_config, strict, highlight, image_cache, prosemirror);
+    let ctx = HtmlContext::new(
+        base_dir,
+        image_config,
+        strict,
+        highlight,
+        image_cache,
+        prosemirror,
+    );
     let mut html = String::new();
     node_to_html(node, &mut html, &ctx)?;
     Ok(html)
@@ -103,10 +110,7 @@ fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(),
             // <code class="language-..."> for Google Docs
             html.push_str("<pre");
             if let Some(lang) = &code.lang {
-                html.push_str(&format!(
-                    " data-language=\"{}\"",
-                    html_escape(lang)
-                ));
+                html.push_str(&format!(" data-language=\"{}\"", html_escape(lang)));
             }
 
             if let Some(hl) = ctx.highlight {
@@ -337,7 +341,16 @@ mod tests {
             max_dimension: 1200,
             quality: 80,
         };
-        mdast_to_html(&ast, Path::new("."), &image_config, false, None, &cache, false).unwrap()
+        mdast_to_html(
+            &ast,
+            Path::new("."),
+            &image_config,
+            false,
+            None,
+            &cache,
+            false,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -423,7 +436,16 @@ mod tests {
             max_dimension: 1200,
             quality: 80,
         };
-        let html = mdast_to_html(&ast, Path::new("."), &image_config, false, None, &cache, true).unwrap();
+        let html = mdast_to_html(
+            &ast,
+            Path::new("."),
+            &image_config,
+            false,
+            None,
+            &cache,
+            true,
+        )
+        .unwrap();
         assert!(html.starts_with("<p data-pm-slice=\"1 1 []\"></p>"));
     }
 
