@@ -159,9 +159,12 @@ fn node_to_markdown(
         Node::Code(code) => 'code_block: {
             // Check for mermaid diagram
             if code.lang.as_deref() == Some("mermaid")
-                && let Some(output) =
-                    ctx.mermaid_cache
-                        .render(&code.value, ctx.mermaid_config, ctx.image_config, ctx.strict)?
+                && let Some(output) = ctx.mermaid_cache.render(
+                    &code.value,
+                    ctx.mermaid_config,
+                    ctx.image_config,
+                    ctx.strict,
+                )?
             {
                 let img = output.to_embedded_image();
                 md.push_str("![mermaid diagram](");

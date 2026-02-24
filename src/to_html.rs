@@ -121,9 +121,12 @@ fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(),
         Node::Code(code) => 'code_block: {
             // Check for mermaid diagram
             if code.lang.as_deref() == Some("mermaid")
-                && let Some(output) =
-                    ctx.mermaid_cache
-                        .render(&code.value, ctx.mermaid_config, ctx.image_config, ctx.strict)?
+                && let Some(output) = ctx.mermaid_cache.render(
+                    &code.value,
+                    ctx.mermaid_config,
+                    ctx.image_config,
+                    ctx.strict,
+                )?
             {
                 match ctx.mermaid_config.format {
                     MermaidFormat::Svg => {

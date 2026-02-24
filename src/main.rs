@@ -1,14 +1,14 @@
 mod config;
 mod highlight;
 mod image;
+#[cfg(feature = "mcp")]
+mod mcp;
 mod mermaid;
 mod render;
 mod to_html;
 mod to_markdown;
 #[cfg(target_os = "macos")]
 mod to_nsattributedstring;
-#[cfg(feature = "mcp")]
-mod mcp;
 use clap::Parser;
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
 use config::{
@@ -514,8 +514,11 @@ fn main() -> io::Result<()> {
 
     debug!(
         "Mermaid: embed={}, format={}, optimize={}, max={}x{}",
-        cfg.mermaid.embed, cfg.mermaid.format, cfg.mermaid.optimize,
-        cfg.mermaid.max_width, cfg.mermaid.max_height
+        cfg.mermaid.embed,
+        cfg.mermaid.format,
+        cfg.mermaid.optimize,
+        cfg.mermaid.max_width,
+        cfg.mermaid.max_height
     );
 
     // Create shared caches to avoid duplicate work across formats

@@ -107,18 +107,17 @@ pub fn render_to_markdown(
 /// Copy HTML + plain text to the system clipboard.
 pub fn copy_to_clipboard(html: &str, plain_text: &str) -> Result<(), io::Error> {
     debug!("Writing to clipboard");
-    let clipboard = ClipboardContext::new().map_err(|e| {
-        io::Error::other(format!("Failed to create clipboard context: {}", e))
-    })?;
+    let clipboard = ClipboardContext::new()
+        .map_err(|e| io::Error::other(format!("Failed to create clipboard context: {}", e)))?;
 
     let contents = vec![
         ClipboardContent::Text(plain_text.to_string()),
         ClipboardContent::Html(html.to_string()),
     ];
 
-    clipboard.set(contents).map_err(|e| {
-        io::Error::other(format!("Failed to set clipboard content: {}", e))
-    })?;
+    clipboard
+        .set(contents)
+        .map_err(|e| io::Error::other(format!("Failed to set clipboard content: {}", e)))?;
 
     info!("Copied to clipboard (HTML)");
     Ok(())

@@ -196,7 +196,6 @@ impl EmbeddedImage {
         let b64 = STANDARD.encode(&self.data);
         format!("data:{};base64,{}", self.mime_type, b64)
     }
-
 }
 
 /// Helper to handle image loading with fallback/fail behavior

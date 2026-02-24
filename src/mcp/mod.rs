@@ -6,13 +6,9 @@ use crate::config::{
 };
 use crate::render::{self, RenderContext};
 use rmcp::{
-    ErrorData as McpError, Peer, RoleServer, ServerHandler,
-    handler::server::router::tool::ToolRouter,
-    handler::server::wrapper::Parameters,
-    model::*,
-    service::ElicitationError,
-    tool, tool_handler, tool_router,
-    ServiceExt,
+    ErrorData as McpError, Peer, RoleServer, ServerHandler, ServiceExt,
+    handler::server::router::tool::ToolRouter, handler::server::wrapper::Parameters, model::*,
+    service::ElicitationError, tool, tool_handler, tool_router,
 };
 use std::sync::Arc;
 use tools::{RenderMermaidParams, RenderToClipboardParams, RenderToFileParams};
@@ -218,8 +214,7 @@ impl MdcopyMcpServer {
             let path = std::path::PathBuf::from(path_str);
             if path.exists() && !params.overwrite {
                 // Try elicitation
-                let should_overwrite =
-                    try_elicit_overwrite(&peer, path_str).await;
+                let should_overwrite = try_elicit_overwrite(&peer, path_str).await;
                 if !should_overwrite {
                     return Ok(CallToolResult::error(vec![Content::text(format!(
                         "File already exists: {}. Set overwrite=true or confirm via elicitation.",
@@ -235,10 +230,7 @@ impl MdcopyMcpServer {
                 .suffix(&format!(".{}", extension))
                 .tempfile()
                 .map_err(|e| {
-                    McpError::internal_error(
-                        format!("Failed to create temp file: {}", e),
-                        None,
-                    )
+                    McpError::internal_error(format!("Failed to create temp file: {}", e), None)
                 })?;
             let (_, path) = tmp.keep().map_err(|e| {
                 McpError::internal_error(format!("Failed to persist temp file: {}", e), None)
@@ -314,10 +306,7 @@ async fn try_elicit_overwrite(peer: &Peer<RoleServer>, path: &str) -> bool {
     }
 
     match peer
-        .elicit::<OverwriteConfirm>(format!(
-            "File already exists: {}. Overwrite?",
-            path
-        ))
+        .elicit::<OverwriteConfirm>(format!("File already exists: {}. Overwrite?", path))
         .await
     {
         Ok(Some(confirm)) => confirm.overwrite,
@@ -382,8 +371,7 @@ async fn run_stdio() -> std::io::Result<()> {
 
 async fn run_http(listen: &str) -> std::io::Result<()> {
     use rmcp::transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService,
-        session::local::LocalSessionManager,
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
 
     let ct = tokio_util::sync::CancellationToken::new();

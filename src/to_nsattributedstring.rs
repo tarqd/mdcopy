@@ -452,7 +452,12 @@ fn node_to_attributed_string(
             if code.lang.as_deref() == Some("mermaid")
                 && let Some(output) = ctx
                     .mermaid_cache
-                    .render(&code.value, ctx.mermaid_config, ctx.image_config, ctx.strict)
+                    .render(
+                        &code.value,
+                        ctx.mermaid_config,
+                        ctx.image_config,
+                        ctx.strict,
+                    )
                     .map_err(|e| e.to_string())?
             {
                 // NSAttributedString needs raster images - force PNG when SVG is selected
@@ -1167,11 +1172,7 @@ fn embed_image(
 }
 
 /// Embed raw image data as NSTextAttachment (used for mermaid diagrams)
-fn embed_image_data(
-    attr_string: &NSMutableAttributedString,
-    data: &[u8],
-    mime_type: &str,
-) {
+fn embed_image_data(attr_string: &NSMutableAttributedString, data: &[u8], mime_type: &str) {
     use objc2_foundation::NSFileWrapper;
 
     let ns_data = objc2_foundation::NSData::with_bytes(data);
@@ -1190,8 +1191,7 @@ fn embed_image_data(
         _ => "png",
     };
 
-    static MERMAID_COUNTER: std::sync::atomic::AtomicUsize =
-        std::sync::atomic::AtomicUsize::new(0);
+    static MERMAID_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let counter = MERMAID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let filename = format!("mermaid_{}.{}", counter, extension);
 
@@ -1357,10 +1357,21 @@ mod tests {
         let ast = parse_markdown("Hello world");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
         let conversion = result.unwrap();
         assert!(conversion.attr_string.length() > 0);
@@ -1371,10 +1382,21 @@ mod tests {
         let ast = parse_markdown("**bold**");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1383,10 +1405,21 @@ mod tests {
         let ast = parse_markdown("*italic*");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1395,10 +1428,21 @@ mod tests {
         let ast = parse_markdown("***bold and italic***");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1407,10 +1451,21 @@ mod tests {
         let ast = parse_markdown("# Heading 1");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1419,10 +1474,21 @@ mod tests {
         let ast = parse_markdown("`code`");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1431,10 +1497,21 @@ mod tests {
         let ast = parse_markdown("[example](https://example.com)");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1443,10 +1520,21 @@ mod tests {
         let ast = parse_markdown("~~deleted~~");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1455,10 +1543,21 @@ mod tests {
         let ast = parse_markdown("**bold** and `code` and [link](url) and ~~strike~~");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1467,10 +1566,21 @@ mod tests {
         let ast = parse_markdown("```rust\nfn main() {}\n```");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1479,10 +1589,21 @@ mod tests {
         let ast = parse_markdown("- Item 1\n- Item 2\n- Item 3");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1491,10 +1612,21 @@ mod tests {
         let ast = parse_markdown("> This is a quote\n> with multiple lines");
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1508,10 +1640,21 @@ mod tests {
         );
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 
@@ -1524,10 +1667,21 @@ mod tests {
         );
         let cache = ImageCache::new();
         let config = test_image_config();
-        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_config = MermaidConfig {
+            embed: false,
+            ..Default::default()
+        };
         let mermaid_cache = MermaidCache::new();
-        let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
+        let result = mdast_to_nsattributed_string(
+            &ast,
+            Path::new("."),
+            &config,
+            false,
+            None,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        );
         assert!(result.is_ok());
     }
 }

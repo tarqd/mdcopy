@@ -176,8 +176,16 @@ fn rasterize_svg(
     let max_h = mermaid_config.max_height as f32;
 
     // Scale to fit within max_width × max_height (logical 1x size)
-    let scale_w = if size.width() > max_w { max_w / size.width() } else { 1.0 };
-    let scale_h = if size.height() > max_h { max_h / size.height() } else { 1.0 };
+    let scale_w = if size.width() > max_w {
+        max_w / size.width()
+    } else {
+        1.0
+    };
+    let scale_h = if size.height() > max_h {
+        max_h / size.height()
+    } else {
+        1.0
+    };
     let scale = scale_w.min(scale_h);
 
     let logical_width = (size.width() * scale).ceil() as u32;
@@ -317,7 +325,12 @@ mod tests {
         let config = MermaidConfig::default();
         let img_config = test_image_config();
         // Completely invalid syntax
-        let result = cache.render("not a valid diagram at all }{}{}{", &config, &img_config, true);
+        let result = cache.render(
+            "not a valid diagram at all }{}{}{",
+            &config,
+            &img_config,
+            true,
+        );
         // Either error or graceful handling depending on what mermaid-rs considers invalid
         // Just verify it doesn't panic
         let _ = result;
@@ -328,7 +341,12 @@ mod tests {
         let cache = MermaidCache::new();
         let config = MermaidConfig::default();
         let img_config = test_image_config();
-        let result = cache.render("not a valid diagram at all }{}{}{", &config, &img_config, false);
+        let result = cache.render(
+            "not a valid diagram at all }{}{}{",
+            &config,
+            &img_config,
+            false,
+        );
         // In graceful mode, should not error
         assert!(result.is_ok());
     }
