@@ -152,8 +152,7 @@ fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(),
                 // Fall through to normal code block on render failure (graceful mode)
             }
 
-            // Normalize language for Google Docs and ProseMirror compatibility
-            let normalized_lang = code.lang.as_ref().map(|l| normalize_language(l));
+            let normalized_lang = code.lang.as_ref().map(|l| l.to_lowercase());
 
             // <pre data-language="..."> for editor compatibility
             // <code class="language-..."> for Google Docs
@@ -163,7 +162,6 @@ fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(),
             }
 
             if let Some(hl) = ctx.highlight {
-                // Use original lang for syntect lookup (it has its own alias resolution)
                 let syntax = code
                     .lang
                     .as_ref()
@@ -357,40 +355,6 @@ fn render_table_row(
     Ok(())
 }
 
-/// Normalize markdown fence language identifiers to canonical names
-/// recognized by Google Docs and ProseMirror-based editors.
-///
-/// Google Docs requires `class="language-..."` on `<code>` with the full
-/// language name (e.g., "javascript" not "js") to set the correct syntax
-/// highlighting language on paste.
-fn normalize_language(lang: &str) -> String {
-    let lower = lang.to_lowercase();
-    match lower.as_str() {
-        "js" | "jsx" | "mjs" | "cjs" => "javascript".to_string(),
-        "ts" | "tsx" | "mts" | "cts" => "typescript".to_string(),
-        "py" | "python3" => "python".to_string(),
-        "rb" => "ruby".to_string(),
-        "rs" => "rust".to_string(),
-        "sh" | "zsh" | "fish" => "bash".to_string(),
-        "yml" => "yaml".to_string(),
-        "kt" | "kts" => "kotlin".to_string(),
-        "pl" | "pm" => "perl".to_string(),
-        "hs" => "haskell".to_string(),
-        "ex" | "exs" => "elixir".to_string(),
-        "erl" => "erlang".to_string(),
-        "coffee" => "coffeescript".to_string(),
-        "objc" | "obj-c" => "objective-c".to_string(),
-        "cpp" | "cxx" | "cc" | "c++" | "hpp" => "c++".to_string(),
-        "cs" | "csharp" | "c#" => "c#".to_string(),
-        "ps1" | "psm1" => "powershell".to_string(),
-        "latex" => "tex".to_string(),
-        "scss" => "sass".to_string(),
-        "golang" => "go".to_string(),
-        "dockerfile" => "docker".to_string(),
-        _ => lower,
-    }
-}
-
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -512,38 +476,8 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_language_abbreviations() {
-        assert_eq!(normalize_language("js"), "javascript");
-        assert_eq!(normalize_language("ts"), "typescript");
-        assert_eq!(normalize_language("py"), "python");
-        assert_eq!(normalize_language("rb"), "ruby");
-        assert_eq!(normalize_language("rs"), "rust");
-        assert_eq!(normalize_language("sh"), "bash");
-        assert_eq!(normalize_language("yml"), "yaml");
-        assert_eq!(normalize_language("kt"), "kotlin");
-        assert_eq!(normalize_language("cpp"), "c++");
-        assert_eq!(normalize_language("cs"), "c#");
-        assert_eq!(normalize_language("golang"), "go");
-    }
-
-    #[test]
-    fn test_normalize_language_case_insensitive() {
-        assert_eq!(normalize_language("JS"), "javascript");
-        assert_eq!(normalize_language("Python"), "python");
-        assert_eq!(normalize_language("TypeScript"), "typescript");
-    }
-
-    #[test]
-    fn test_normalize_language_passthrough() {
-        assert_eq!(normalize_language("rust"), "rust");
-        assert_eq!(normalize_language("python"), "python");
-        assert_eq!(normalize_language("go"), "go");
-        assert_eq!(normalize_language("sql"), "sql");
-    }
-
-    #[test]
-    fn test_code_block_normalizes_language_in_html() {
-        let html = render_html("```js\nconsole.log('hello')\n```");
+    fn test_code_block_lowercases_language() {
+        let html = render_html("```JavaScript\nconsole.log('hello')\n```");
         assert!(html.contains("class=\"language-javascript\""));
         assert!(html.contains("data-language=\"javascript\""));
     }
