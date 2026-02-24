@@ -502,8 +502,8 @@ impl Config {
         if let Some(v) = file_config.root {
             config.root = Some(PathBuf::from(v));
         }
-        if file_config.strict.is_some() {
-            config.strict = file_config.strict.unwrap();
+        if let Some(v) = file_config.strict {
+            config.strict = v;
             sources.strict = file_source(&config_file_path);
         }
         if let Some(v) = file_config.prosemirror {
@@ -511,12 +511,12 @@ impl Config {
         }
 
         // Apply highlight config from file
-        if file_config.highlight.enable.is_some() {
-            config.highlight.enable = file_config.highlight.enable.unwrap();
+        if let Some(v) = file_config.highlight.enable {
+            config.highlight.enable = v;
             sources.highlight_enable = file_source(&config_file_path);
         }
-        if file_config.highlight.theme.is_some() {
-            config.highlight.theme = file_config.highlight.theme.unwrap();
+        if let Some(v) = file_config.highlight.theme {
+            config.highlight.theme = v;
             sources.highlight_theme = file_source(&config_file_path);
         }
         if let Some(v) = file_config.highlight.themes_dir {
@@ -530,28 +530,28 @@ impl Config {
         }
 
         // Apply image config from file
-        if file_config.image.embed.local.is_some() {
-            config.image.embed_local = file_config.image.embed.local.unwrap();
+        if let Some(v) = file_config.image.embed.local {
+            config.image.embed_local = v;
             sources.embed_local = file_source(&config_file_path);
         }
-        if file_config.image.embed.remote.is_some() {
-            config.image.embed_remote = file_config.image.embed.remote.unwrap();
+        if let Some(v) = file_config.image.embed.remote {
+            config.image.embed_remote = v;
             sources.embed_remote = file_source(&config_file_path);
         }
-        if file_config.image.embed.optimize_local.is_some() {
-            config.image.optimize_local = file_config.image.embed.optimize_local.unwrap();
+        if let Some(v) = file_config.image.embed.optimize_local {
+            config.image.optimize_local = v;
             sources.optimize_local = file_source(&config_file_path);
         }
-        if file_config.image.embed.optimize_remote.is_some() {
-            config.image.optimize_remote = file_config.image.embed.optimize_remote.unwrap();
+        if let Some(v) = file_config.image.embed.optimize_remote {
+            config.image.optimize_remote = v;
             sources.optimize_remote = file_source(&config_file_path);
         }
-        if file_config.image.embed.max_dimension.is_some() {
-            config.image.max_dimension = file_config.image.embed.max_dimension.unwrap();
+        if let Some(v) = file_config.image.embed.max_dimension {
+            config.image.max_dimension = v;
             sources.max_dimension = file_source(&config_file_path);
         }
-        if file_config.image.embed.quality.is_some() {
-            config.image.quality = file_config.image.embed.quality.unwrap();
+        if let Some(v) = file_config.image.embed.quality {
+            config.image.quality = v;
             sources.quality = file_source(&config_file_path);
         }
 
