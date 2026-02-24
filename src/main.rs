@@ -5,8 +5,6 @@ mod to_html;
 mod to_markdown;
 #[cfg(target_os = "macos")]
 mod to_nsattributedstring;
-mod to_rtf;
-
 use clap::Parser;
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
 use config::{CliArgs, CliHighlightArgs, CliImageArgs, Config, default_config_dir};
@@ -19,7 +17,6 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipboardFormat {
     Html,
-    Rtf,
     Markdown,
     #[cfg(target_os = "macos")]
     Native,
@@ -30,7 +27,6 @@ fn parse_formats(s: &str) -> Result<Vec<ClipboardFormat>, String> {
     for part in s.split(',') {
         match part.trim().to_lowercase().as_str() {
             "html" => formats.push(ClipboardFormat::Html),
-            "rtf" => formats.push(ClipboardFormat::Rtf),
             "markdown" | "md" => formats.push(ClipboardFormat::Markdown),
             #[cfg(target_os = "macos")]
             "native" | "nsattributedstring" => formats.push(ClipboardFormat::Native),
@@ -50,7 +46,7 @@ fn parse_formats(s: &str) -> Result<Vec<ClipboardFormat>, String> {
 #[derive(Parser)]
 #[command(name = "mdcopy")]
 #[command(version)]
-#[command(about = "Convert markdown to clipboard with text, HTML, and RTF formats")]
+#[command(about = "Convert markdown to clipboard with text and HTML formats")]
 #[command(disable_help_flag = true)]
 struct Args {
     /// Print help (includes current settings with sources)
@@ -171,7 +167,7 @@ struct Args {
     #[arg(short, long)]
     quiet: bool,
 
-    /// Output format(s): html, rtf, markdown, native (comma-separated for clipboard, single for file output)
+    /// Output format(s): html, markdown, native (comma-separated for clipboard, single for file output)
     ///
     /// Native format (macOS only) uses NSAttributedString for best clipboard compatibility
     /// with native apps like TextEdit, Notes, Mail. Native is clipboard-only.
@@ -415,7 +411,7 @@ fn main() -> io::Result<()> {
         (Some(fmt), false) => parse_formats(fmt).expect("Invalid format specification"),
         // No format specified - use context-aware defaults
         (None, true) => vec![ClipboardFormat::Html],
-        (None, false) => vec![ClipboardFormat::Html, ClipboardFormat::Rtf],
+        (None, false) => vec![ClipboardFormat::Html],
     };
 
     // Warn if optimize is enabled but embedding is disabled (optimization requires embedding)
@@ -453,22 +449,6 @@ fn main() -> io::Result<()> {
         None
     };
 
-    let rtf_output = if formats.contains(&ClipboardFormat::Rtf) {
-        Some(
-            to_rtf::mdast_to_rtf(
-                &ast,
-                &base_dir,
-                &cfg.image,
-                cfg.strict,
-                highlight_ctx.as_ref(),
-                &image_cache,
-            )
-            .map_err(io::Error::other)?,
-        )
-    } else {
-        None
-    };
-
     let markdown_output = if formats.contains(&ClipboardFormat::Markdown) {
         Some(
             to_markdown::mdast_to_markdown(&ast, &base_dir, &cfg.image, cfg.strict, &image_cache)
@@ -497,18 +477,16 @@ fn main() -> io::Result<()> {
 
     #[cfg(target_os = "macos")]
     debug!(
-        "Generated: HTML={}, RTF={}, Markdown={}, Native={}",
+        "Generated: HTML={}, Markdown={}, Native={}",
         html_output.as_ref().map(|s| s.len()).unwrap_or(0),
-        rtf_output.as_ref().map(|s| s.len()).unwrap_or(0),
         markdown_output.as_ref().map(|s| s.len()).unwrap_or(0),
         native_output.is_some(),
     );
 
     #[cfg(not(target_os = "macos"))]
     debug!(
-        "Generated: HTML={}, RTF={}, Markdown={}",
+        "Generated: HTML={}, Markdown={}",
         html_output.as_ref().map(|s| s.len()).unwrap_or(0),
-        rtf_output.as_ref().map(|s| s.len()).unwrap_or(0),
         markdown_output.as_ref().map(|s| s.len()).unwrap_or(0),
     );
 
@@ -516,7 +494,6 @@ fn main() -> io::Result<()> {
         Some(ref path) if path.as_os_str() == "-" => {
             let output = match formats[0] {
                 ClipboardFormat::Html => html_output.as_ref().expect("HTML output missing"),
-                ClipboardFormat::Rtf => rtf_output.as_ref().expect("RTF output missing"),
                 ClipboardFormat::Markdown => {
                     markdown_output.as_ref().expect("Markdown output missing")
                 }
@@ -530,7 +507,6 @@ fn main() -> io::Result<()> {
         Some(ref path) => {
             let output = match formats[0] {
                 ClipboardFormat::Html => html_output.as_ref().expect("HTML output missing"),
-                ClipboardFormat::Rtf => rtf_output.as_ref().expect("RTF output missing"),
                 ClipboardFormat::Markdown => {
                     markdown_output.as_ref().expect("Markdown output missing")
                 }
@@ -575,7 +551,6 @@ fn main() -> io::Result<()> {
                     .iter()
                     .map(|f| match f {
                         ClipboardFormat::Html => "HTML",
-                        ClipboardFormat::Rtf => "RTF",
                         ClipboardFormat::Markdown => "Markdown",
                         ClipboardFormat::Native => "Native",
                     })
@@ -593,9 +568,6 @@ fn main() -> io::Result<()> {
                 if let Some(ref html) = html_output {
                     contents.push(ClipboardContent::Html(html.clone()));
                 }
-                if let Some(ref rtf) = rtf_output {
-                    contents.push(ClipboardContent::Rtf(rtf.clone()));
-                }
                 if let Some(ref md) = markdown_output {
                     // Markdown with embedded images replaces plain text
                     contents[0] = ClipboardContent::Text(md.clone());
@@ -605,7 +577,6 @@ fn main() -> io::Result<()> {
                     .iter()
                     .map(|f| match f {
                         ClipboardFormat::Html => "HTML",
-                        ClipboardFormat::Rtf => "RTF",
                         ClipboardFormat::Markdown => "Markdown",
                         ClipboardFormat::Native => "Native",
                     })
@@ -627,9 +598,6 @@ fn main() -> io::Result<()> {
                 if let Some(html) = html_output {
                     contents.push(ClipboardContent::Html(html));
                 }
-                if let Some(rtf) = rtf_output {
-                    contents.push(ClipboardContent::Rtf(rtf));
-                }
                 if let Some(md) = markdown_output {
                     // Markdown with embedded images replaces plain text
                     contents[0] = ClipboardContent::Text(md);
@@ -639,7 +607,6 @@ fn main() -> io::Result<()> {
                     .iter()
                     .map(|f| match f {
                         ClipboardFormat::Html => "HTML",
-                        ClipboardFormat::Rtf => "RTF",
                         ClipboardFormat::Markdown => "Markdown",
                     })
                     .collect();

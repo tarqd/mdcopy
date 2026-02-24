@@ -1,6 +1,6 @@
 # mdcopy
 
-A CLI tool that converts Markdown to clipboard with multiple formats (plain text, HTML, and RTF), enabling rich-text pasting into applications like email clients, word processors, and note-taking apps.
+A CLI tool that converts Markdown to clipboard with multiple formats (plain text and HTML), enabling rich-text pasting into applications like email clients, word processors, and note-taking apps.
 
 ![mdcopy screenshot](assets/screenshot.png)
 
@@ -8,7 +8,7 @@ A CLI tool that converts Markdown to clipboard with multiple formats (plain text
 
 When you copy Markdown text and paste it into applications like Gmail, Notion, or Word, you typically get the raw Markdown syntax rather than formatted text. mdcopy solves this by:
 
-- Converting Markdown to rich text and copying it to your clipboard in three formats simultaneously (plain text, HTML, RTF)
+- Converting Markdown to rich text and copying it to your clipboard in multiple formats simultaneously (plain text, HTML)
 - Allowing you to paste formatted content into virtually any application
 - Embedding images directly in the clipboard so they paste inline
 - Syntax highlighting code blocks with customizable themes
@@ -90,21 +90,18 @@ Code blocks are syntax highlighted using the [syntect](https://github.com/trishu
 
 ### Image Embedding
 
-Images can be embedded as base64 data URLs in HTML output and hex-encoded data in RTF output.
+Images can be embedded as base64 data URLs in HTML output.
 
 **Embedding modes (`--embed`):**
 - `local` (default): Embed only local/relative images
 - `all`: Embed both local and remote images (fetches remote images)
 - `none`: Don't embed any images, keep original URLs
 
-**RTF limitations:** Only PNG and JPEG images can be embedded in RTF. Other formats fall back to hyperlinks.
-
 ### Multi-Format Clipboard
 
-When outputting to clipboard (default), mdcopy sets three formats simultaneously:
+When outputting to clipboard (default), mdcopy sets two formats simultaneously:
 - **Plain text**: Original Markdown source
 - **HTML**: Rendered HTML with embedded images and syntax highlighting
-- **RTF**: Rich Text Format for applications that don't support HTML paste
 
 This allows pasting into virtually any application with appropriate formatting.
 

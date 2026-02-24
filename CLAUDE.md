@@ -17,30 +17,29 @@ cargo fmt                # Format code
 
 ## Architecture
 
-mdcopy is a Rust CLI tool that converts Markdown to clipboard with three formats (plain text, HTML, RTF). It uses the `markdown` crate to parse Markdown into an AST, then renders that AST to HTML and RTF.
+mdcopy is a Rust CLI tool that converts Markdown to clipboard with two formats (plain text, HTML). It uses the `markdown` crate to parse Markdown into an AST, then renders that AST to HTML.
 
 ### Module Structure
 
 - `main.rs` - CLI argument parsing (clap), config merging, orchestration
 - `config.rs` - Configuration system with precedence: CLI > env vars > config file > defaults
 - `to_html.rs` - Converts markdown AST to HTML with syntax highlighting
-- `to_rtf.rs` - Converts markdown AST to RTF with syntax highlighting and color tables
-- `image.rs` - Image loading (local/remote), embedding as base64/hex, MIME type detection
+- `image.rs` - Image loading (local/remote), embedding as base64, MIME type detection
 - `highlight.rs` - Syntax highlighting via syntect, custom theme/syntax loading
 
 ### Key Dependencies
 
 - `markdown` - Parses GFM markdown to AST (`markdown::to_mdast`)
 - `syntect` - Syntax highlighting for code blocks
-- `clipboard-rs` - Multi-format clipboard access (text, HTML, RTF)
+- `clipboard-rs` - Multi-format clipboard access (text, HTML)
 - `ureq` - HTTP client for fetching remote images
 
 ### Data Flow
 
 1. Input: Read markdown from file or stdin
 2. Parse: `markdown::to_mdast()` produces AST
-3. Render: `to_html::mdast_to_html()` and `to_rtf::mdast_to_rtf()` traverse AST
-4. Output: Write to clipboard (3 formats) or file (HTML only)
+3. Render: `to_html::mdast_to_html()` traverses AST
+4. Output: Write to clipboard (2 formats) or file (HTML only)
 
 ### Configuration
 
@@ -57,7 +56,7 @@ Config is loaded in `Config::build()` which merges sources in order:
 - `Local`: Embed local only, keep remote URLs
 - `None`: Keep all original URLs
 
-Images are converted to base64 data URLs for HTML and hex-encoded for RTF. Only PNG/JPEG work in RTF; others fall back to hyperlinks.
+Images are converted to base64 data URLs for HTML.
 
 ### Syntax Highlighting
 

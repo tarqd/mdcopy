@@ -195,17 +195,6 @@ impl EmbeddedImage {
         format!("data:{};base64,{}", self.mime_type, b64)
     }
 
-    pub fn to_rtf_hex(&self) -> String {
-        self.data.iter().map(|b| format!("{:02x}", b)).collect()
-    }
-
-    pub fn rtf_format(&self) -> Option<&'static str> {
-        match self.mime_type.as_str() {
-            "image/png" => Some("\\pngblip"),
-            "image/jpeg" => Some("\\jpegblip"),
-            _ => None, // RTF only supports PNG and JPEG natively
-        }
-    }
 }
 
 /// Helper to handle image loading with fallback/fail behavior
@@ -670,42 +659,6 @@ mod tests {
         let data_url = img.to_data_url();
         assert!(data_url.starts_with("data:image/png;base64,"));
         assert_eq!(data_url, "data:image/png;base64,AQIDBA==");
-    }
-
-    #[test]
-    fn test_embedded_image_to_rtf_hex() {
-        let img = EmbeddedImage {
-            data: vec![0x00, 0xFF, 0xAB, 0x12],
-            mime_type: "image/png".to_string(),
-        };
-        assert_eq!(img.to_rtf_hex(), "00ffab12");
-    }
-
-    #[test]
-    fn test_embedded_image_rtf_format() {
-        let png = EmbeddedImage {
-            data: vec![],
-            mime_type: "image/png".to_string(),
-        };
-        assert_eq!(png.rtf_format(), Some("\\pngblip"));
-
-        let jpeg = EmbeddedImage {
-            data: vec![],
-            mime_type: "image/jpeg".to_string(),
-        };
-        assert_eq!(jpeg.rtf_format(), Some("\\jpegblip"));
-
-        let gif = EmbeddedImage {
-            data: vec![],
-            mime_type: "image/gif".to_string(),
-        };
-        assert_eq!(gif.rtf_format(), None);
-
-        let webp = EmbeddedImage {
-            data: vec![],
-            mime_type: "image/webp".to_string(),
-        };
-        assert_eq!(webp.rtf_format(), None);
     }
 
     #[test]
