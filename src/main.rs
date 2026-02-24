@@ -2,10 +2,13 @@ mod config;
 mod highlight;
 mod image;
 mod mermaid;
+mod render;
 mod to_html;
 mod to_markdown;
 #[cfg(target_os = "macos")]
 mod to_nsattributedstring;
+#[cfg(feature = "mcp")]
+mod mcp;
 use clap::Parser;
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
 use config::{
@@ -47,12 +50,29 @@ fn parse_formats(s: &str) -> Result<Vec<ClipboardFormat>, String> {
     Ok(formats)
 }
 
+#[cfg(feature = "mcp")]
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Start the MCP server
+    Mcp {
+        /// Transport type: stdio or http
+        #[arg(long, default_value = "stdio")]
+        transport: String,
+        /// Listen address for HTTP transport
+        #[arg(long, default_value = "127.0.0.1:3100")]
+        listen: String,
+    },
+}
+
 #[derive(Parser)]
 #[command(name = "mdcopy")]
 #[command(version)]
 #[command(about = "Convert markdown to clipboard with text and HTML formats")]
 #[command(disable_help_flag = true)]
 struct Args {
+    #[command(subcommand)]
+    #[cfg(feature = "mcp")]
+    command: Option<Command>,
     /// Print help (includes current settings with sources)
     #[arg(long, action = clap::ArgAction::SetTrue)]
     help: bool,
@@ -158,7 +178,7 @@ struct Args {
     #[arg(short = 'M', long, overrides_with = "mermaid", hide = true)]
     no_mermaid: bool,
 
-    /// Mermaid output format: svg, png, jpeg (default: svg)
+    /// Mermaid output format: svg, png, jpeg (default: png)
     #[arg(long)]
     mermaid_format: Option<String>,
 
@@ -250,6 +270,12 @@ fn resolve_base_dir(input: &std::path::Path, root: Option<PathBuf>) -> PathBuf {
 fn main() -> io::Result<()> {
     let args = Args::parse();
     init_logger(args.verbose, args.quiet);
+
+    // Dispatch to MCP server if subcommand is present
+    #[cfg(feature = "mcp")]
+    if let Some(Command::Mcp { transport, listen }) = args.command {
+        return mcp::run_mcp_server(&transport, &listen);
+    }
 
     // Handle --list-themes early (before config loading)
     if args.list_themes {
