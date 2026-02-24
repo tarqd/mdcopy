@@ -2,7 +2,7 @@
 
 ## Code Block Recognition
 
-Google Docs recognizes code blocks from HTML paste using `<pre><code>` structure with the `lang` attribute.
+Google Docs recognizes code blocks from HTML paste using `<pre><code>` structure.
 
 ### Minimum Required HTML
 
@@ -11,8 +11,12 @@ Google Docs recognizes code blocks from HTML paste using `<pre><code>` structure
 ```
 
 **Both are required:**
-1. `class="language-..."` on `<code>` (sets the syntax highlighting language)
+1. `class="language-..."` on `<code>`
 2. `<pre>` wrapper around `<code>`
+
+### Language Detection
+
+**Code block language detection from HTML paste is a Google Workspace (paid) feature only.** Free Google accounts will get code blocks but the language will not be set. The HTML structure above is correct — it just requires a Workspace account for the language to be recognized.
 
 ### What Doesn't Work
 - `data-language` on `<pre>` or `<code>` - ignored
@@ -109,4 +113,5 @@ Constructing a valid Google Docs clipboard payload is complex because:
 
 1. **Minimal payload**: Try constructing just the essential fields
 2. **Template-based**: Capture a real paste and modify just the content/language
-3. **Accept limitation**: Use HTML paste (code block works, just no language)
+
+Note: HTML paste with `class="language-..."` does work for setting the language, but only on Google Workspace (paid) accounts. Free accounts get code blocks without language detection regardless of approach.
