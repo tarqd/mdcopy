@@ -162,24 +162,29 @@ Add to your Claude Desktop configuration (`claude_desktop_config.json`):
 }
 ```
 
-#### ChatGPT / Codex
+#### Codex
 
 ```bash
-chatgpt mcp add mdcopy -- mdcopy mcp
+codex mcp add mdcopy -- mdcopy mcp
 ```
 
-Or add to your configuration file:
+Or add to `~/.codex/config.toml`:
 
-```json
-{
-  "mcpServers": {
-    "mdcopy": {
-      "command": "mdcopy",
-      "args": ["mcp"]
-    }
-  }
-}
+```toml
+[mcp_servers.mdcopy]
+command = "mdcopy"
+args = ["mcp"]
 ```
+
+#### ChatGPT
+
+ChatGPT connects to MCP servers over HTTPS. Start mdcopy with the HTTP transport and expose it with a tunnel:
+
+```bash
+mdcopy mcp --transport http --listen 127.0.0.1:3100
+```
+
+Then add the server URL in ChatGPT under **Settings > Apps** using the endpoint `https://your-tunnel-url/mcp`.
 
 #### HTTP Transport
 
