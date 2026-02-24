@@ -21,6 +21,7 @@ pub enum ImageError {
     FetchFailed(String, String),
     ReadFailed(String, String),
     InvalidImage(String),
+    MermaidError(String),
 }
 
 impl std::fmt::Display for ImageError {
@@ -34,6 +35,7 @@ impl std::fmt::Display for ImageError {
                 write!(f, "Failed to read image '{}': {}", path, reason)
             }
             ImageError::InvalidImage(url) => write!(f, "Invalid image data: {}", url),
+            ImageError::MermaidError(msg) => write!(f, "Mermaid render failed: {}", msg),
         }
     }
 }

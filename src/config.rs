@@ -3,6 +3,40 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Mermaid output format
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MermaidFormat {
+    #[default]
+    Svg,
+    Png,
+    Jpeg,
+}
+
+impl std::fmt::Display for MermaidFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MermaidFormat::Svg => write!(f, "svg"),
+            MermaidFormat::Png => write!(f, "png"),
+            MermaidFormat::Jpeg => write!(f, "jpeg"),
+        }
+    }
+}
+
+impl std::str::FromStr for MermaidFormat {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "svg" => Ok(MermaidFormat::Svg),
+            "png" => Ok(MermaidFormat::Png),
+            "jpeg" | "jpg" => Ok(MermaidFormat::Jpeg),
+            _ => Err(format!(
+                "Unknown mermaid format: {} (expected svg, png, or jpeg)",
+                s
+            )),
+        }
+    }
+}
+
 /// Highlight configuration from file
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -35,6 +69,17 @@ pub struct FileImageConfig {
     pub embed: FileImageEmbedConfig,
 }
 
+/// Mermaid configuration from file
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FileMermaidConfig {
+    pub embed: Option<bool>,
+    pub format: Option<String>,
+    pub optimize: Option<bool>,
+    pub max_width: Option<u32>,
+    pub max_height: Option<u32>,
+}
+
 /// Configuration loaded from file
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -48,6 +93,8 @@ pub struct FileConfig {
     pub highlight: FileHighlightConfig,
     #[serde(default)]
     pub image: FileImageConfig,
+    #[serde(default)]
+    pub mermaid: FileMermaidConfig,
 }
 
 /// Resolved highlight configuration
@@ -68,6 +115,31 @@ impl Default for HighlightConfig {
             themes_dir: None,
             syntaxes_dir: None,
             languages: default_language_mappings(),
+        }
+    }
+}
+
+/// Resolved mermaid configuration
+#[derive(Debug, Clone)]
+pub struct MermaidConfig {
+    pub embed: bool,
+    pub format: MermaidFormat,
+    /// Optimize rasterized output using [image] quality/max_dimension settings
+    pub optimize: bool,
+    /// Max width for SVG→pixel rasterization
+    pub max_width: u32,
+    /// Max height for SVG→pixel rasterization
+    pub max_height: u32,
+}
+
+impl Default for MermaidConfig {
+    fn default() -> Self {
+        Self {
+            embed: true,
+            format: MermaidFormat::Png,
+            optimize: true,
+            max_width: 1200,
+            max_height: 800,
         }
     }
 }
@@ -132,6 +204,9 @@ pub struct ConfigSources {
     pub strict: ConfigSource,
     pub highlight_enable: ConfigSource,
     pub highlight_theme: ConfigSource,
+    pub mermaid_embed: ConfigSource,
+    pub mermaid_format: ConfigSource,
+    pub mermaid_optimize: ConfigSource,
 }
 
 impl Default for ConfigSources {
@@ -146,6 +221,9 @@ impl Default for ConfigSources {
             strict: ConfigSource::Default,
             highlight_enable: ConfigSource::Default,
             highlight_theme: ConfigSource::Default,
+            mermaid_embed: ConfigSource::Default,
+            mermaid_format: ConfigSource::Default,
+            mermaid_optimize: ConfigSource::Default,
         }
     }
 }
@@ -187,6 +265,18 @@ impl ConfigSources {
             "  highlight_theme: {} ({})",
             config.highlight.theme, self.highlight_theme
         ));
+        lines.push(format!(
+            "  mermaid: {} ({})",
+            config.mermaid.embed, self.mermaid_embed
+        ));
+        lines.push(format!(
+            "  mermaid_format: {} ({})",
+            config.mermaid.format, self.mermaid_format
+        ));
+        lines.push(format!(
+            "  mermaid_optimize: {} ({})",
+            config.mermaid.optimize, self.mermaid_optimize
+        ));
         lines.join("\n")
     }
 }
@@ -202,6 +292,7 @@ pub struct Config {
     pub prosemirror: bool,
     pub highlight: HighlightConfig,
     pub image: ImageConfig,
+    pub mermaid: MermaidConfig,
 }
 
 impl Default for Config {
@@ -214,6 +305,7 @@ impl Default for Config {
             prosemirror: true,
             highlight: HighlightConfig::default(),
             image: ImageConfig::default(),
+            mermaid: MermaidConfig::default(),
         }
     }
 }
@@ -336,6 +428,15 @@ pub struct CliImageArgs {
     pub quality: Option<u8>,
 }
 
+/// CLI argument values for mermaid settings
+pub struct CliMermaidArgs {
+    pub embed: Option<bool>,
+    pub format: Option<MermaidFormat>,
+    pub optimize: Option<bool>,
+    pub max_width: Option<u32>,
+    pub max_height: Option<u32>,
+}
+
 /// CLI argument values (None means not specified)
 pub struct CliArgs {
     pub input: Option<PathBuf>,
@@ -345,6 +446,7 @@ pub struct CliArgs {
     pub prosemirror: Option<bool>,
     pub highlight: CliHighlightArgs,
     pub image: CliImageArgs,
+    pub mermaid: CliMermaidArgs,
 }
 
 impl HighlightConfig {
@@ -453,6 +555,28 @@ impl Config {
             sources.quality = file_source(&config_file_path);
         }
 
+        // Apply mermaid config from file
+        if let Some(v) = file_config.mermaid.embed {
+            config.mermaid.embed = v;
+            sources.mermaid_embed = file_source(&config_file_path);
+        }
+        if let Some(ref v) = file_config.mermaid.format
+            && let Ok(fmt) = v.parse::<MermaidFormat>()
+        {
+            config.mermaid.format = fmt;
+            sources.mermaid_format = file_source(&config_file_path);
+        }
+        if let Some(v) = file_config.mermaid.optimize {
+            config.mermaid.optimize = v;
+            sources.mermaid_optimize = file_source(&config_file_path);
+        }
+        if let Some(v) = file_config.mermaid.max_width {
+            config.mermaid.max_width = v;
+        }
+        if let Some(v) = file_config.mermaid.max_height {
+            config.mermaid.max_height = v;
+        }
+
         // Apply environment variables (higher priority than config file)
         if let Some(v) = env_var("input") {
             config.input = PathBuf::from(v);
@@ -516,6 +640,26 @@ impl Config {
             sources.quality = ConfigSource::Env("MDCOPY_IMAGE_EMBED_QUALITY".to_string());
         }
 
+        // Mermaid env vars
+        if let Some(v) = env_var("mermaid_embed").and_then(|s| parse_bool(&s)) {
+            config.mermaid.embed = v;
+            sources.mermaid_embed = ConfigSource::Env("MDCOPY_MERMAID_EMBED".to_string());
+        }
+        if let Some(v) = env_var("mermaid_format").and_then(|s| s.parse::<MermaidFormat>().ok()) {
+            config.mermaid.format = v;
+            sources.mermaid_format = ConfigSource::Env("MDCOPY_MERMAID_FORMAT".to_string());
+        }
+        if let Some(v) = env_var("mermaid_optimize").and_then(|s| parse_bool(&s)) {
+            config.mermaid.optimize = v;
+            sources.mermaid_optimize = ConfigSource::Env("MDCOPY_MERMAID_OPTIMIZE".to_string());
+        }
+        if let Some(v) = env_var("mermaid_max_width").and_then(|s| s.parse().ok()) {
+            config.mermaid.max_width = v;
+        }
+        if let Some(v) = env_var("mermaid_max_height").and_then(|s| s.parse().ok()) {
+            config.mermaid.max_height = v;
+        }
+
         // Apply CLI arguments (highest priority)
         if let Some(v) = cli.input {
             config.input = v;
@@ -576,6 +720,26 @@ impl Config {
             sources.quality = ConfigSource::Cli;
         }
 
+        // Mermaid CLI args
+        if let Some(v) = cli.mermaid.embed {
+            config.mermaid.embed = v;
+            sources.mermaid_embed = ConfigSource::Cli;
+        }
+        if let Some(v) = cli.mermaid.format {
+            config.mermaid.format = v;
+            sources.mermaid_format = ConfigSource::Cli;
+        }
+        if let Some(v) = cli.mermaid.optimize {
+            config.mermaid.optimize = v;
+            sources.mermaid_optimize = ConfigSource::Cli;
+        }
+        if let Some(v) = cli.mermaid.max_width {
+            config.mermaid.max_width = v;
+        }
+        if let Some(v) = cli.mermaid.max_height {
+            config.mermaid.max_height = v;
+        }
+
         (config, sources)
     }
 
@@ -622,7 +786,14 @@ remote = {embed_remote}
 optimize_local = {optimize_local}
 optimize_remote = {optimize_remote}
 max_dimension = {max_dimension}
-quality = {quality}",
+quality = {quality}
+
+[mermaid]
+embed = {mermaid_embed}
+format = {mermaid_format:?}
+optimize = {mermaid_optimize}
+max_width = {mermaid_max_width}
+max_height = {mermaid_max_height}",
             strict = self.strict,
             highlight_enable = self.highlight.enable,
             highlight_theme = self.highlight.theme,
@@ -632,6 +803,11 @@ quality = {quality}",
             optimize_remote = self.image.optimize_remote,
             max_dimension = self.image.max_dimension,
             quality = self.image.quality,
+            mermaid_embed = self.mermaid.embed,
+            mermaid_format = self.mermaid.format.to_string(),
+            mermaid_optimize = self.mermaid.optimize,
+            mermaid_max_width = self.mermaid.max_width,
+            mermaid_max_height = self.mermaid.max_height,
         )
     }
 }
@@ -662,6 +838,13 @@ mod tests {
                 optimize_remote: None,
                 max_dimension: None,
                 quality: None,
+            },
+            mermaid: CliMermaidArgs {
+                embed: None,
+                format: None,
+                optimize: None,
+                max_width: None,
+                max_height: None,
             },
         }
     }
@@ -821,6 +1004,13 @@ mod tests {
                 max_dimension: Some(800),
                 quality: Some(75),
             },
+            mermaid: CliMermaidArgs {
+                embed: None,
+                format: None,
+                optimize: None,
+                max_width: None,
+                max_height: None,
+            },
         };
 
         let (config, sources) = Config::build(cli, None);
@@ -934,5 +1124,95 @@ mod tests {
         assert!(config.image.embed.optimize_remote.is_none());
         assert!(config.image.embed.max_dimension.is_none());
         assert!(config.image.embed.quality.is_none());
+        assert!(config.mermaid.embed.is_none());
+        assert!(config.mermaid.format.is_none());
+    }
+
+    #[test]
+    fn test_mermaid_format_parse() {
+        assert_eq!("svg".parse::<MermaidFormat>().unwrap(), MermaidFormat::Svg);
+        assert_eq!("png".parse::<MermaidFormat>().unwrap(), MermaidFormat::Png);
+        assert_eq!(
+            "jpeg".parse::<MermaidFormat>().unwrap(),
+            MermaidFormat::Jpeg
+        );
+        assert_eq!("jpg".parse::<MermaidFormat>().unwrap(), MermaidFormat::Jpeg);
+        assert_eq!("SVG".parse::<MermaidFormat>().unwrap(), MermaidFormat::Svg);
+        assert!("invalid".parse::<MermaidFormat>().is_err());
+    }
+
+    #[test]
+    fn test_mermaid_format_display() {
+        assert_eq!(MermaidFormat::Svg.to_string(), "svg");
+        assert_eq!(MermaidFormat::Png.to_string(), "png");
+        assert_eq!(MermaidFormat::Jpeg.to_string(), "jpeg");
+    }
+
+    #[test]
+    fn test_mermaid_config_defaults() {
+        let config = MermaidConfig::default();
+        assert!(config.embed);
+        assert_eq!(config.format, MermaidFormat::Png);
+        assert!(config.optimize);
+        assert_eq!(config.max_width, 1200);
+        assert_eq!(config.max_height, 800);
+    }
+
+    #[test]
+    fn test_config_build_mermaid_defaults() {
+        let cli = empty_cli_args();
+        let (config, _) = Config::build(cli, None);
+        assert!(config.mermaid.embed);
+        assert_eq!(config.mermaid.format, MermaidFormat::Png);
+    }
+
+    #[test]
+    fn test_config_build_mermaid_from_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        let mut file = std::fs::File::create(&config_path).unwrap();
+        writeln!(file, "[mermaid]").unwrap();
+        writeln!(file, "embed = false").unwrap();
+        writeln!(file, "format = \"png\"").unwrap();
+        writeln!(file, "optimize = false").unwrap();
+        writeln!(file, "max_width = 800").unwrap();
+        writeln!(file, "max_height = 600").unwrap();
+
+        let cli = empty_cli_args();
+        let (config, sources) = Config::build(cli, Some(config_path));
+
+        assert!(!config.mermaid.embed);
+        assert_eq!(config.mermaid.format, MermaidFormat::Png);
+        assert!(!config.mermaid.optimize);
+        assert_eq!(config.mermaid.max_width, 800);
+        assert_eq!(config.mermaid.max_height, 600);
+        assert!(matches!(sources.mermaid_embed, ConfigSource::File(_)));
+        assert!(matches!(sources.mermaid_format, ConfigSource::File(_)));
+        assert!(matches!(sources.mermaid_optimize, ConfigSource::File(_)));
+    }
+
+    #[test]
+    fn test_config_build_mermaid_cli_overrides() {
+        let cli = CliArgs {
+            mermaid: CliMermaidArgs {
+                embed: Some(false),
+                format: Some(MermaidFormat::Png),
+                optimize: Some(false),
+                max_width: Some(600),
+                max_height: Some(400),
+            },
+            ..empty_cli_args()
+        };
+
+        let (config, sources) = Config::build(cli, None);
+        assert!(!config.mermaid.embed);
+        assert_eq!(config.mermaid.format, MermaidFormat::Png);
+        assert!(!config.mermaid.optimize);
+        assert_eq!(config.mermaid.max_width, 600);
+        assert_eq!(config.mermaid.max_height, 400);
+        assert!(matches!(sources.mermaid_embed, ConfigSource::Cli));
+        assert!(matches!(sources.mermaid_format, ConfigSource::Cli));
+        assert!(matches!(sources.mermaid_optimize, ConfigSource::Cli));
     }
 }

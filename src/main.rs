@@ -1,6 +1,7 @@
 mod config;
 mod highlight;
 mod image;
+mod mermaid;
 mod to_html;
 mod to_markdown;
 #[cfg(target_os = "macos")]
@@ -9,7 +10,10 @@ mod to_rtf;
 
 use clap::Parser;
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
-use config::{CliArgs, CliHighlightArgs, CliImageArgs, Config, default_config_dir};
+use config::{
+    CliArgs, CliHighlightArgs, CliImageArgs, CliMermaidArgs, Config, MermaidFormat,
+    default_config_dir,
+};
 use log::{LevelFilter, debug, info};
 use markdown::{Constructs, Options, ParseOptions};
 use std::fs;
@@ -150,6 +154,32 @@ struct Args {
     /// Image quality 1-100 (default: 80)
     #[arg(long)]
     quality: Option<u8>,
+
+    /// Render mermaid diagrams as images
+    #[arg(short = 'm', long, overrides_with = "no_mermaid")]
+    mermaid: bool,
+
+    #[arg(short = 'M', long, overrides_with = "mermaid", hide = true)]
+    no_mermaid: bool,
+
+    /// Mermaid output format: svg, png, jpeg (default: svg)
+    #[arg(long)]
+    mermaid_format: Option<String>,
+
+    /// Optimize mermaid raster output using image quality/max_dimension settings
+    #[arg(long, overrides_with = "no_mermaid_optimize")]
+    mermaid_optimize: bool,
+
+    #[arg(long, overrides_with = "mermaid_optimize", hide = true)]
+    no_mermaid_optimize: bool,
+
+    /// Mermaid max rasterization width in pixels (default: 1200)
+    #[arg(long)]
+    mermaid_max_width: Option<u32>,
+
+    /// Mermaid max rasterization height in pixels (default: 800)
+    #[arg(long)]
+    mermaid_max_height: Option<u32>,
 
     /// Path to configuration file
     #[arg(short, long)]
@@ -300,6 +330,25 @@ fn main() -> io::Result<()> {
         _ => None,
     };
 
+    // --mermaid / --no-mermaid
+    let mermaid_embed = match (args.mermaid, args.no_mermaid) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => None,
+    };
+
+    let mermaid_format = args
+        .mermaid_format
+        .as_deref()
+        .map(|s| s.parse::<MermaidFormat>().expect("Invalid mermaid format"));
+
+    // --mermaid-optimize / --no-mermaid-optimize
+    let mermaid_optimize = match (args.mermaid_optimize, args.no_mermaid_optimize) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => None,
+    };
+
     let cli_args = CliArgs {
         input: args.input,
         output: args.output.clone(),
@@ -320,6 +369,13 @@ fn main() -> io::Result<()> {
             max_dimension: args.max_dimension,
             quality: args.quality,
         },
+        mermaid: CliMermaidArgs {
+            embed: mermaid_embed,
+            format: mermaid_format,
+            optimize: mermaid_optimize,
+            max_width: args.mermaid_max_width,
+            max_height: args.mermaid_max_height,
+        },
     };
 
     let (cfg, sources) = Config::build(cli_args, args.config);
@@ -339,7 +395,9 @@ fn main() -> io::Result<()> {
             .replace("-z, --optimize", "-z, -Z, --[no-]optimize")
             .replace("-s, --strict", "-s, -S, --[no-]strict")
             .replace("-h, --highlight", "-h, -H, --[no-]highlight")
-            .replace("-p, --prosemirror", "-p, -P, --[no-]prosemirror");
+            .replace("-p, --prosemirror", "-p, -P, --[no-]prosemirror")
+            .replace("-m, --mermaid", "-m, -M, --[no-]mermaid")
+            .replace("--mermaid-optimize", "--[no-]mermaid-optimize");
         println!("{help}");
         println!("\nCurrent settings:");
         println!("{}", sources.format_settings(&cfg));
@@ -432,8 +490,15 @@ fn main() -> io::Result<()> {
         );
     }
 
-    // Create shared image cache to avoid duplicate loads across formats
+    debug!(
+        "Mermaid: embed={}, format={}, optimize={}, max={}x{}",
+        cfg.mermaid.embed, cfg.mermaid.format, cfg.mermaid.optimize,
+        cfg.mermaid.max_width, cfg.mermaid.max_height
+    );
+
+    // Create shared caches to avoid duplicate work across formats
     let image_cache = image::ImageCache::new();
+    let mermaid_cache = mermaid::MermaidCache::new();
 
     // Generate requested outputs
     let html_output = if formats.contains(&ClipboardFormat::Html) {
@@ -446,6 +511,8 @@ fn main() -> io::Result<()> {
                 highlight_ctx.as_ref(),
                 &image_cache,
                 cfg.prosemirror,
+                &cfg.mermaid,
+                &mermaid_cache,
             )
             .map_err(io::Error::other)?,
         )
@@ -471,8 +538,16 @@ fn main() -> io::Result<()> {
 
     let markdown_output = if formats.contains(&ClipboardFormat::Markdown) {
         Some(
-            to_markdown::mdast_to_markdown(&ast, &base_dir, &cfg.image, cfg.strict, &image_cache)
-                .map_err(io::Error::other)?,
+            to_markdown::mdast_to_markdown(
+                &ast,
+                &base_dir,
+                &cfg.image,
+                cfg.strict,
+                &image_cache,
+                &cfg.mermaid,
+                &mermaid_cache,
+            )
+            .map_err(io::Error::other)?,
         )
     } else {
         None
@@ -488,6 +563,8 @@ fn main() -> io::Result<()> {
                 cfg.strict,
                 highlight_ctx.as_ref(),
                 &image_cache,
+                &cfg.mermaid,
+                &mermaid_cache,
             )
             .map_err(io::Error::other)?,
         )
