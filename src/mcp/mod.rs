@@ -46,7 +46,7 @@ impl MdcopyMcpServer {
             },
             mermaid: CliMermaidArgs {
                 embed: None,
-                format: Some(MermaidFormat::Svg), // SVG default for MCP (CLI defaults to PNG)
+                format: None, // Use PNG default (same as CLI) for clipboard compatibility
                 optimize: None,
                 max_width: None,
                 max_height: None,
@@ -153,7 +153,7 @@ impl MdcopyMcpServer {
                     None,
                 ));
             }
-            None => self.config.mermaid.format,
+            None => MermaidFormat::Svg, // SVG is preferred for file output (lossless, scalable)
         };
 
         let extension = format.to_string();
