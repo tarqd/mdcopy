@@ -176,16 +176,6 @@ command = "mdcopy"
 args = ["mcp"]
 ```
 
-#### ChatGPT
-
-ChatGPT connects to MCP servers over HTTPS. Start mdcopy with the HTTP transport and expose it with a tunnel:
-
-```bash
-mdcopy mcp --transport http --listen 127.0.0.1:3100
-```
-
-Then add the server URL in ChatGPT under **Settings > Apps** using the endpoint `https://your-tunnel-url/mcp`.
-
 #### HTTP Transport
 
 For remote or multi-client access, use the HTTP transport:
