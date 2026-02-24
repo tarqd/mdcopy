@@ -11,7 +11,7 @@ use rmcp::{
     service::ElicitationError, tool, tool_handler, tool_router,
 };
 use std::sync::Arc;
-use tools::{RenderMermaidParams, RenderToClipboardParams, RenderToFileParams};
+use tools::{RenderMermaidParams, RenderToClipboardParams};
 
 /// MCP server wrapping mdcopy's rendering capabilities.
 #[derive(Clone)]
@@ -109,57 +109,6 @@ impl MdcopyMcpServer {
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Copied to clipboard ({} bytes HTML)",
             result
-        ))]))
-    }
-
-    #[tool(
-        description = "Render markdown to a standalone HTML file. For local markdown files, prefer file_path over reading file content."
-    )]
-    async fn render_markdown_to_file(
-        &self,
-        Parameters(params): Parameters<RenderToFileParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let config = self.config.clone();
-        let render_ctx = self.render_ctx.clone();
-
-        let result = tokio::task::spawn_blocking(move || {
-            let (markdown_text, base_dir) = tools::resolve_input(
-                params.file_path.as_deref(),
-                params.text.as_deref(),
-                params.root.as_deref(),
-            )?;
-
-            let image_config = ImageConfig {
-                embed_local: params.embed_local,
-                embed_remote: params.embed_remote,
-                optimize_local: params.optimize && params.embed_local,
-                optimize_remote: params.optimize && params.embed_remote,
-                max_dimension: config.image.max_dimension,
-                quality: config.image.quality,
-            };
-
-            let html = render::render_to_html(
-                &markdown_text,
-                &base_dir,
-                &image_config,
-                config.strict,
-                config.prosemirror,
-                &config.mermaid,
-                &render_ctx,
-            )?;
-
-            let output_path = std::path::Path::new(&params.output_path);
-            render::write_to_file(&html, output_path)?;
-
-            Ok::<_, std::io::Error>((html.len(), params.output_path))
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("Task join error: {}", e), None))?
-        .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(format!(
-            "Wrote {} bytes to {}",
-            result.0, result.1
         ))]))
     }
 
@@ -332,9 +281,8 @@ impl ServerHandler for MdcopyMcpServer {
                 website_url: None,
             },
             instructions: Some(
-                "mdcopy renders Markdown to rich HTML for clipboard or file output. \
+                "mdcopy renders Markdown to rich HTML and copies it to the system clipboard. \
                  Tools: render_markdown_to_clipboard (copies formatted markdown to system clipboard), \
-                 render_markdown_to_file (writes standalone HTML file), \
                  render_mermaid (renders mermaid diagram to SVG/PNG/JPEG file). \
                  For local files, pass file_path rather than file content to avoid bloating the conversation."
                     .to_string(),

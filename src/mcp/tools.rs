@@ -36,41 +36,6 @@ pub struct RenderToClipboardParams {
     pub root: Option<String>,
 }
 
-/// Parameters for rendering markdown to an HTML file.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct RenderToFileParams {
-    /// Absolute path to a markdown file. Preferred for local files —
-    /// avoids reading file content into the conversation.
-    #[serde(default)]
-    pub file_path: Option<String>,
-
-    /// Raw markdown text. Use for generated content or short snippets.
-    #[serde(default)]
-    pub text: Option<String>,
-
-    /// Embed local images as base64. Recommended for email/docs paste.
-    #[serde(default = "default_true")]
-    #[schemars(default = "default_true")]
-    pub embed_local: bool,
-
-    /// Fetch and embed remote images. Enable for offline/self-contained output.
-    #[serde(default)]
-    pub embed_remote: bool,
-
-    /// Resize and compress embedded images. Reduces output size.
-    #[serde(default = "default_true")]
-    #[schemars(default = "default_true")]
-    pub optimize: bool,
-
-    /// Root directory for resolving relative image paths.
-    /// Defaults to the input file's parent directory.
-    #[serde(default)]
-    pub root: Option<String>,
-
-    /// Output file path for the rendered HTML.
-    pub output_path: String,
-}
-
 fn default_true() -> bool {
     true
 }

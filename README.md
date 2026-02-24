@@ -12,6 +12,7 @@ When you copy Markdown text and paste it into applications like Gmail, Notion, o
 - Allowing you to paste formatted content into virtually any application
 - Embedding images directly in the clipboard so they paste inline
 - Syntax highlighting code blocks with customizable themes
+- Rendering mermaid diagrams as images inline
 
 ## Installation
 
@@ -36,9 +37,6 @@ echo "# Hello World" | mdcopy
 # Read from file
 mdcopy -i document.md
 
-# Output to file instead of clipboard
-mdcopy -i document.md -o output.html
-
 # Output to stdout
 mdcopy -i document.md -o -
 ```
@@ -48,9 +46,9 @@ mdcopy -i document.md -o -
 | Option | Description |
 |--------|-------------|
 | `-i, --input <FILE>` | Input file (use `-` for stdin, default: stdin) |
-| `-o, --output <FILE>` | Output to file instead of clipboard (use `-` for stdout) |
+| `-o, --output <FILE>` | Output to file or stdout (use `-` for stdout) |
 | `-r, --root <DIR>` | Base directory for resolving relative image paths |
-| `-e, --embed <MODE>` | Image embedding mode: `all`, `local` (default), `none` |
+| `-e, --embed` | Embed all images (local and remote) |
 | `-c, --config <FILE>` | Path to configuration file |
 | `--strict` | Fail on errors instead of graceful fallback |
 | `-v, --verbose` | Increase logging verbosity (`-v`, `-vv`, `-vvv`) |
@@ -66,6 +64,16 @@ mdcopy -i document.md -o -
 | `--highlight-syntaxes-dir <DIR>` | Custom syntaxes directory |
 | `--list-themes` | List available themes and exit |
 
+### Mermaid Options
+
+| Option | Description |
+|--------|-------------|
+| `-m, --mermaid` | Render mermaid diagrams as images (default: enabled) |
+| `--mermaid-format <FORMAT>` | Output format: `svg`, `png`, `jpeg` (default: `png`) |
+| `--mermaid-optimize` | Optimize rasterized output |
+| `--mermaid-max-width <PX>` | Max rasterization width (default: 1200) |
+| `--mermaid-max-height <PX>` | Max rasterization height (default: 800) |
+
 ## Features
 
 ### Markdown Support
@@ -77,6 +85,21 @@ Supports GitHub Flavored Markdown (GFM) including:
 - Blockquotes and horizontal rules
 - Links and images
 - Tables with column alignment
+
+### Mermaid Diagrams
+
+Mermaid code blocks are rendered as images and embedded directly in the clipboard output. This means flowcharts, sequence diagrams, ERDs, and other mermaid diagrams paste as images into Google Docs, email, Notion, and other apps.
+
+````markdown
+```mermaid
+flowchart LR
+    A[Markdown] --> B[mdcopy] --> C[Clipboard]
+```
+````
+
+- Renders to SVG internally using [mermaid-rs](https://github.com/zed-industries/mermaid-rs-renderer), then rasterizes to PNG/JPEG at 2x for HiDPI
+- Configure format, max dimensions, and optimization via CLI flags or config file
+- Gracefully falls back to a code block if rendering fails (unless `--strict` is set)
 
 ### Syntax Highlighting
 
@@ -92,10 +115,10 @@ Code blocks are syntax highlighted using the [syntect](https://github.com/trishu
 
 Images can be embedded as base64 data URLs in HTML output.
 
-**Embedding modes (`--embed`):**
-- `local` (default): Embed only local/relative images
-- `all`: Embed both local and remote images (fetches remote images)
-- `none`: Don't embed any images, keep original URLs
+**Embedding modes:**
+- `--embed-local` (default): Embed only local/relative images
+- `--embed` / `-e`: Embed both local and remote images (fetches remote images)
+- `--no-embed` / `-E`: Don't embed any images, keep original URLs
 
 ### Multi-Format Clipboard
 
@@ -104,6 +127,64 @@ When outputting to clipboard (default), mdcopy sets two formats simultaneously:
 - **HTML**: Rendered HTML with embedded images and syntax highlighting
 
 This allows pasting into virtually any application with appropriate formatting.
+
+## MCP Server
+
+mdcopy includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes its rendering capabilities as tools for AI assistants. This lets AI agents copy formatted markdown and render diagrams on your behalf.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `render_markdown_to_clipboard` | Render markdown to rich HTML and copy to the system clipboard. Accepts a file path or raw text. Supports image embedding and optimization. |
+| `render_mermaid` | Render a mermaid diagram to an image file (SVG, PNG, or JPEG). Accepts source text or a file path. Useful for generating diagram assets. |
+
+### Setup
+
+#### Claude Code
+
+```bash
+claude mcp add mdcopy -- mdcopy mcp
+```
+
+#### Claude Desktop
+
+Add to your Claude Desktop configuration (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "mdcopy": {
+      "command": "mdcopy",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### Codex
+
+```bash
+codex mcp add mdcopy -- mdcopy mcp
+```
+
+Or add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.mdcopy]
+command = "mdcopy"
+args = ["mcp"]
+```
+
+#### HTTP Transport
+
+For remote or multi-client access, use the HTTP transport:
+
+```bash
+mdcopy mcp --transport http --listen 127.0.0.1:3100
+```
+
+The server will be available at `http://127.0.0.1:3100/mcp`.
 
 ## Configuration
 
@@ -128,6 +209,13 @@ theme = "base16-ocean.dark"
 [highlight.languages]
 jsx = "JavaScript"
 tsx = "TypeScript"
+
+[mermaid]
+embed = true
+format = "png"
+optimize = true
+max_width = 1200
+max_height = 800
 ```
 
 ### Environment Variables
@@ -151,10 +239,10 @@ All settings can be configured via environment variables with the `MDCOPY_` pref
 mdcopy -i README.md
 
 # Embed all images including remote ones
-mdcopy -i doc.md --embed all
+mdcopy -i doc.md --embed
 
 # Skip image embedding entirely
-mdcopy -i doc.md --embed none
+mdcopy -i doc.md --no-embed
 
 # Set custom base directory for relative image paths
 mdcopy -i doc.md --root /path/to/images
@@ -166,7 +254,10 @@ mdcopy -i doc.md --highlight-theme "Solarized (dark)"
 mdcopy --list-themes
 
 # Disable syntax highlighting
-mdcopy -i doc.md --highlight=false
+mdcopy -i doc.md --no-highlight
+
+# Render mermaid diagrams as SVG instead of PNG
+mdcopy -i doc.md --mermaid-format svg
 
 # Fail on missing images instead of warning
 mdcopy -i doc.md --strict
