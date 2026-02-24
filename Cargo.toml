@@ -19,8 +19,8 @@ syntect = "5.3.0"
 tempfile = "3.24.0"
 toml = "0.9.11"
 ureq = "3.1.4"
-zune-core = "0.5"
-zune-image = "=0.5.0-rc0"
+zune-core = "0.5.1"
+zune-image = "0.5.0"
 
 # MCP server (optional, behind "mcp" feature)
 rmcp = { version = "0.16", features = ["server", "macros", "transport-io", "transport-streamable-http-server", "elicitation", "schemars"], optional = true }
