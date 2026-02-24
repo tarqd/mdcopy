@@ -53,9 +53,10 @@ use std::path::Path;
 use syntect::easy::HighlightLines;
 use syntect::util::LinesWithEndings;
 
-use crate::config::ImageConfig;
+use crate::config::{ImageConfig, MermaidConfig, MermaidFormat};
 use crate::highlight::HighlightContext;
 use crate::image::{ImageCache, is_remote_url};
+use crate::mermaid::MermaidCache;
 
 use objc2::AnyThread;
 use objc2::rc::{Retained, autoreleasepool};
@@ -97,6 +98,7 @@ pub struct NativeConversionResult {
 /// - `embed_local: true, embed_remote: true`: Convert to data URIs in HTML
 /// - `embed_local: true, embed_remote: false`: Data URIs for local, original URLs for remote
 /// - `embed_local: false, embed_remote: false`: Keep original URLs in HTML
+#[allow(clippy::too_many_arguments)]
 pub fn mdast_to_nsattributed_string(
     node: &Node,
     base_dir: &Path,
@@ -104,11 +106,20 @@ pub fn mdast_to_nsattributed_string(
     strict: bool,
     highlight: Option<&HighlightContext>,
     image_cache: &ImageCache,
+    mermaid_config: &MermaidConfig,
+    mermaid_cache: &MermaidCache,
 ) -> Result<NativeConversionResult, String> {
     autoreleasepool(|_| {
         let attr_string = NSMutableAttributedString::new();
-        let mut ctx =
-            AttributedStringContext::new(base_dir, image_config, strict, highlight, image_cache);
+        let mut ctx = AttributedStringContext::new(
+            base_dir,
+            image_config,
+            strict,
+            highlight,
+            image_cache,
+            mermaid_config,
+            mermaid_cache,
+        );
 
         node_to_attributed_string(node, &attr_string, &mut ctx)?;
 
@@ -313,17 +324,22 @@ struct AttributedStringContext<'a> {
     strict: bool,
     highlight: Option<&'a HighlightContext>,
     image_cache: &'a ImageCache,
+    mermaid_config: &'a MermaidConfig,
+    mermaid_cache: &'a MermaidCache,
     /// Maps generated filenames (image_N.ext) to original URLs for HTML post-processing
     image_urls: std::collections::HashMap<String, String>,
 }
 
 impl<'a> AttributedStringContext<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         base_dir: &'a Path,
         image_config: &'a ImageConfig,
         strict: bool,
         highlight: Option<&'a HighlightContext>,
         image_cache: &'a ImageCache,
+        mermaid_config: &'a MermaidConfig,
+        mermaid_cache: &'a MermaidCache,
     ) -> Self {
         Self {
             base_dir,
@@ -331,6 +347,8 @@ impl<'a> AttributedStringContext<'a> {
             strict,
             highlight,
             image_cache,
+            mermaid_config,
+            mermaid_cache,
             image_urls: std::collections::HashMap::new(),
         }
     }
@@ -429,7 +447,67 @@ fn node_to_attributed_string(
             apply_strikethrough(&temp_string, range);
             attr_string.appendAttributedString(&temp_string);
         }
-        Node::Code(code) => {
+        Node::Code(code) => 'code_block: {
+            // Check for mermaid diagram
+            if code.lang.as_deref() == Some("mermaid")
+                && let Some(output) = ctx
+                    .mermaid_cache
+                    .render(&code.value, ctx.mermaid_config, ctx.image_config, ctx.strict)
+                    .map_err(|e| e.to_string())?
+            {
+                // NSAttributedString needs raster images - force PNG when SVG is selected
+                let embedded = match ctx.mermaid_config.format {
+                    MermaidFormat::Svg | MermaidFormat::Png => {
+                        // Rasterize SVG to PNG for native clipboard
+                        let raster_config = MermaidConfig {
+                            format: MermaidFormat::Png,
+                            ..ctx.mermaid_config.clone()
+                        };
+                        match crate::mermaid::rasterize_svg_to_raster(
+                            &output.svg,
+                            &raster_config,
+                            ctx.image_config,
+                            ctx.mermaid_cache.fontdb(),
+                        ) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                if ctx.strict {
+                                    return Err(e.to_string());
+                                }
+                                warn!("Mermaid rasterization failed: {}", e);
+                                break 'code_block;
+                            }
+                        }
+                    }
+                    MermaidFormat::Jpeg => {
+                        // Use JPEG as requested
+                        match output.raster {
+                            Some(ref r) => r.clone(),
+                            None => {
+                                match crate::mermaid::rasterize_svg_to_raster(
+                                    &output.svg,
+                                    ctx.mermaid_config,
+                                    ctx.image_config,
+                                    ctx.mermaid_cache.fontdb(),
+                                ) {
+                                    Ok(r) => r,
+                                    Err(e) => {
+                                        if ctx.strict {
+                                            return Err(e.to_string());
+                                        }
+                                        warn!("Mermaid rasterization failed: {}", e);
+                                        break 'code_block;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                embed_image_data(attr_string, &embedded.image.data, &embedded.image.mime_type);
+                break 'code_block;
+            }
+
             let temp_string = NSMutableAttributedString::new();
 
             if let Some(highlight_ctx) = ctx.highlight {
@@ -1088,6 +1166,50 @@ fn embed_image(
     Ok(())
 }
 
+/// Embed raw image data as NSTextAttachment (used for mermaid diagrams)
+fn embed_image_data(
+    attr_string: &NSMutableAttributedString,
+    data: &[u8],
+    mime_type: &str,
+) {
+    use objc2_foundation::NSFileWrapper;
+
+    let ns_data = objc2_foundation::NSData::with_bytes(data);
+
+    let ns_image = match NSImage::initWithData(NSImage::alloc(), &ns_data) {
+        Some(img) if img.isValid() => img,
+        _ => {
+            warn!("Failed to create NSImage from mermaid diagram data");
+            return;
+        }
+    };
+
+    let extension = match mime_type {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        _ => "png",
+    };
+
+    static MERMAID_COUNTER: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+    let counter = MERMAID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let filename = format!("mermaid_{}.{}", counter, extension);
+
+    ns_image.setName(Some(&NSString::from_str(&filename)));
+
+    let file_wrapper = NSFileWrapper::initRegularFileWithContents(NSFileWrapper::alloc(), &ns_data);
+    file_wrapper.setPreferredFilename(Some(&NSString::from_str(&filename)));
+
+    let attachment = NSTextAttachment::new();
+    attachment.setImage(Some(&ns_image));
+    attachment.setFileWrapper(Some(&file_wrapper));
+
+    let attachment_string = NSAttributedString::attributedStringWithAttachment(&attachment);
+    attr_string.appendAttributedString(&attachment_string);
+
+    debug!("Mermaid diagram embedded as {}", filename);
+}
+
 /// Render a table using NSTextTable and NSTextTableBlock
 ///
 /// This uses the NSTextTable API to create proper table layouts. Each cell gets
@@ -1203,7 +1325,9 @@ fn render_table(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::MermaidConfig;
     use crate::image::ImageCache;
+    use crate::mermaid::MermaidCache;
     use markdown::{Constructs, Options, ParseOptions};
 
     fn parse_markdown(md: &str) -> markdown::mdast::Node {
@@ -1233,8 +1357,10 @@ mod tests {
         let ast = parse_markdown("Hello world");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
         let conversion = result.unwrap();
         assert!(conversion.attr_string.length() > 0);
@@ -1245,8 +1371,10 @@ mod tests {
         let ast = parse_markdown("**bold**");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1255,8 +1383,10 @@ mod tests {
         let ast = parse_markdown("*italic*");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1265,8 +1395,10 @@ mod tests {
         let ast = parse_markdown("***bold and italic***");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1275,8 +1407,10 @@ mod tests {
         let ast = parse_markdown("# Heading 1");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1285,8 +1419,10 @@ mod tests {
         let ast = parse_markdown("`code`");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1295,8 +1431,10 @@ mod tests {
         let ast = parse_markdown("[example](https://example.com)");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1305,8 +1443,10 @@ mod tests {
         let ast = parse_markdown("~~deleted~~");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1315,8 +1455,10 @@ mod tests {
         let ast = parse_markdown("**bold** and `code` and [link](url) and ~~strike~~");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1325,8 +1467,10 @@ mod tests {
         let ast = parse_markdown("```rust\nfn main() {}\n```");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1335,8 +1479,10 @@ mod tests {
         let ast = parse_markdown("- Item 1\n- Item 2\n- Item 3");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1345,8 +1491,10 @@ mod tests {
         let ast = parse_markdown("> This is a quote\n> with multiple lines");
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1360,8 +1508,10 @@ mod tests {
         );
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 
@@ -1374,8 +1524,10 @@ mod tests {
         );
         let cache = ImageCache::new();
         let config = test_image_config();
+        let mermaid_config = MermaidConfig { embed: false, ..Default::default() };
+        let mermaid_cache = MermaidCache::new();
         let result =
-            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache);
+            mdast_to_nsattributed_string(&ast, Path::new("."), &config, false, None, &cache, &mermaid_config, &mermaid_cache);
         assert!(result.is_ok());
     }
 }

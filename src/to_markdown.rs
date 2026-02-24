@@ -1,5 +1,6 @@
-use crate::config::ImageConfig;
+use crate::config::{ImageConfig, MermaidConfig};
 use crate::image::{ImageCache, ImageError};
+use crate::mermaid::MermaidCache;
 use markdown::mdast::{AlignKind, Node};
 use std::path::Path;
 
@@ -9,8 +10,17 @@ pub fn mdast_to_markdown(
     image_config: &ImageConfig,
     strict: bool,
     image_cache: &ImageCache,
+    mermaid_config: &MermaidConfig,
+    mermaid_cache: &MermaidCache,
 ) -> Result<String, ImageError> {
-    let mut ctx = MarkdownContext::new(base_dir, image_config, strict, image_cache);
+    let mut ctx = MarkdownContext::new(
+        base_dir,
+        image_config,
+        strict,
+        image_cache,
+        mermaid_config,
+        mermaid_cache,
+    );
     let mut output = String::new();
     node_to_markdown(node, &mut output, &mut ctx)?;
     // Trim trailing whitespace but ensure single trailing newline
@@ -27,6 +37,8 @@ struct MarkdownContext<'a> {
     image_config: &'a ImageConfig,
     strict: bool,
     image_cache: &'a ImageCache,
+    mermaid_config: &'a MermaidConfig,
+    mermaid_cache: &'a MermaidCache,
     /// Current list depth for indentation
     list_depth: usize,
     /// Stack of list types (true = ordered, false = unordered)
@@ -43,12 +55,16 @@ impl<'a> MarkdownContext<'a> {
         image_config: &'a ImageConfig,
         strict: bool,
         image_cache: &'a ImageCache,
+        mermaid_config: &'a MermaidConfig,
+        mermaid_cache: &'a MermaidCache,
     ) -> Self {
         Self {
             base_dir,
             image_config,
             strict,
             image_cache,
+            mermaid_config,
+            mermaid_cache,
             list_depth: 0,
             list_stack: Vec::new(),
             list_indices: Vec::new(),
@@ -140,7 +156,21 @@ fn node_to_markdown(
             }
             md.push_str(backticks);
         }
-        Node::Code(code) => {
+        Node::Code(code) => 'code_block: {
+            // Check for mermaid diagram
+            if code.lang.as_deref() == Some("mermaid")
+                && let Some(output) =
+                    ctx.mermaid_cache
+                        .render(&code.value, ctx.mermaid_config, ctx.image_config, ctx.strict)?
+            {
+                let img = output.to_embedded_image();
+                md.push_str("![mermaid diagram](");
+                md.push_str(&img.to_data_url());
+                md.push_str(")\n");
+                break 'code_block;
+                // Fall through to normal code block on render failure (graceful mode)
+            }
+
             // Determine fence character and length
             let fence_char = if code.value.contains("```") { '~' } else { '`' };
             let mut fence_len = 3;
@@ -478,6 +508,7 @@ mod tests {
     fn roundtrip(md: &str) -> String {
         let ast = parse_markdown(md);
         let cache = crate::image::ImageCache::new();
+        let mermaid_cache = crate::mermaid::MermaidCache::new();
         let image_config = crate::config::ImageConfig {
             embed_local: false,
             embed_remote: false,
@@ -486,7 +517,20 @@ mod tests {
             max_dimension: 1200,
             quality: 80,
         };
-        mdast_to_markdown(&ast, Path::new("."), &image_config, false, &cache).unwrap()
+        let mermaid_config = crate::config::MermaidConfig {
+            embed: false, // Disable mermaid in roundtrip tests to preserve code blocks
+            ..Default::default()
+        };
+        mdast_to_markdown(
+            &ast,
+            Path::new("."),
+            &image_config,
+            false,
+            &cache,
+            &mermaid_config,
+            &mermaid_cache,
+        )
+        .unwrap()
     }
 
     #[test]

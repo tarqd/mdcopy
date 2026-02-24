@@ -1,11 +1,13 @@
-use crate::config::ImageConfig;
+use crate::config::{ImageConfig, MermaidConfig, MermaidFormat};
 use crate::highlight::HighlightContext;
 use crate::image::{ImageCache, ImageError};
+use crate::mermaid::MermaidCache;
 use markdown::mdast::{AlignKind, Node};
 use std::path::Path;
 use syntect::easy::HighlightLines;
 use syntect::util::LinesWithEndings;
 
+#[allow(clippy::too_many_arguments)]
 pub fn mdast_to_html(
     node: &Node,
     base_dir: &Path,
@@ -14,6 +16,8 @@ pub fn mdast_to_html(
     highlight: Option<&HighlightContext>,
     image_cache: &ImageCache,
     prosemirror: bool,
+    mermaid_config: &MermaidConfig,
+    mermaid_cache: &MermaidCache,
 ) -> Result<String, ImageError> {
     let ctx = HtmlContext::new(
         base_dir,
@@ -22,6 +26,8 @@ pub fn mdast_to_html(
         highlight,
         image_cache,
         prosemirror,
+        mermaid_config,
+        mermaid_cache,
     );
     let mut html = String::new();
     node_to_html(node, &mut html, &ctx)?;
@@ -36,9 +42,12 @@ struct HtmlContext<'a> {
     image_cache: &'a ImageCache,
     /// Emit ProseMirror slice marker for Confluence/ProseMirror paste compatibility
     prosemirror: bool,
+    mermaid_config: &'a MermaidConfig,
+    mermaid_cache: &'a MermaidCache,
 }
 
 impl<'a> HtmlContext<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         base_dir: &'a Path,
         image_config: &'a ImageConfig,
@@ -46,6 +55,8 @@ impl<'a> HtmlContext<'a> {
         highlight: Option<&'a HighlightContext>,
         image_cache: &'a ImageCache,
         prosemirror: bool,
+        mermaid_config: &'a MermaidConfig,
+        mermaid_cache: &'a MermaidCache,
     ) -> Self {
         Self {
             base_dir,
@@ -54,6 +65,8 @@ impl<'a> HtmlContext<'a> {
             highlight,
             image_cache,
             prosemirror,
+            mermaid_config,
+            mermaid_cache,
         }
     }
 }
@@ -105,7 +118,40 @@ fn node_to_html(node: &Node, html: &mut String, ctx: &HtmlContext) -> Result<(),
             html.push_str(&html_escape(&code.value));
             html.push_str("</code>");
         }
-        Node::Code(code) => {
+        Node::Code(code) => 'code_block: {
+            // Check for mermaid diagram
+            if code.lang.as_deref() == Some("mermaid")
+                && let Some(output) =
+                    ctx.mermaid_cache
+                        .render(&code.value, ctx.mermaid_config, ctx.image_config, ctx.strict)?
+            {
+                match ctx.mermaid_config.format {
+                    MermaidFormat::Svg => {
+                        // Inline raw SVG for best quality
+                        html.push_str(crate::mermaid::svg_for_inline_html(&output.svg));
+                        html.push('\n');
+                    }
+                    MermaidFormat::Png | MermaidFormat::Jpeg => {
+                        if let Some(ref raster) = output.raster {
+                            html.push_str(&format!(
+                                "<img src=\"{}\" alt=\"mermaid diagram\" width=\"{}\" height=\"{}\" />\n",
+                                html_escape(&raster.image.to_data_url()),
+                                raster.logical_width,
+                                raster.logical_height
+                            ));
+                        } else {
+                            let img = output.to_embedded_image();
+                            html.push_str(&format!(
+                                "<img src=\"{}\" alt=\"mermaid diagram\" />\n",
+                                html_escape(&img.to_data_url())
+                            ));
+                        }
+                    }
+                }
+                break 'code_block;
+                // Fall through to normal code block on render failure (graceful mode)
+            }
+
             // <pre data-language="..."> for ProseMirror/Confluence
             // <code class="language-..."> for Google Docs
             html.push_str("<pre");
@@ -333,6 +379,7 @@ mod tests {
     fn render_html(md: &str) -> String {
         let ast = parse_markdown(md);
         let cache = crate::image::ImageCache::new();
+        let mermaid_cache = crate::mermaid::MermaidCache::new();
         let image_config = crate::config::ImageConfig {
             embed_local: false,
             embed_remote: false,
@@ -341,6 +388,7 @@ mod tests {
             max_dimension: 1200,
             quality: 80,
         };
+        let mermaid_config = crate::config::MermaidConfig::default();
         mdast_to_html(
             &ast,
             Path::new("."),
@@ -349,6 +397,8 @@ mod tests {
             None,
             &cache,
             false,
+            &mermaid_config,
+            &mermaid_cache,
         )
         .unwrap()
     }
@@ -428,6 +478,7 @@ mod tests {
     fn test_prosemirror_slice_marker() {
         let ast = parse_markdown("```js\nconsole.log('hello')\n```");
         let cache = crate::image::ImageCache::new();
+        let mermaid_cache = crate::mermaid::MermaidCache::new();
         let image_config = crate::config::ImageConfig {
             embed_local: false,
             embed_remote: false,
@@ -436,6 +487,7 @@ mod tests {
             max_dimension: 1200,
             quality: 80,
         };
+        let mermaid_config = crate::config::MermaidConfig::default();
         let html = mdast_to_html(
             &ast,
             Path::new("."),
@@ -444,6 +496,8 @@ mod tests {
             None,
             &cache,
             true,
+            &mermaid_config,
+            &mermaid_cache,
         )
         .unwrap();
         assert!(html.starts_with("<p data-pm-slice=\"1 1 []\"></p>"));
