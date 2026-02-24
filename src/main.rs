@@ -54,24 +54,36 @@ fn parse_formats(s: &str) -> Result<Vec<ClipboardFormat>, String> {
 #[derive(clap::Subcommand)]
 enum Command {
     /// Start the MCP (Model Context Protocol) server
-    ///
-    /// Exposes mdcopy's rendering capabilities as MCP tools for use with
-    /// AI assistants like Claude, ChatGPT, and Codex.
-    ///
-    /// Available tools:
-    ///   render_markdown_to_clipboard  Copy rendered markdown to the system clipboard
-    ///   render_mermaid                Render a mermaid diagram to SVG/PNG/JPEG
-    ///
-    /// Examples:
-    ///   mdcopy mcp                          Start with stdio transport (default)
-    ///   mdcopy mcp --transport http          Start HTTP server on 127.0.0.1:3100
-    ///   mdcopy mcp --transport http --listen 0.0.0.0:8080
+    #[command(
+        disable_help_flag = true,
+        long_about = "\
+Start the MCP (Model Context Protocol) server
+
+Exposes mdcopy's rendering capabilities as MCP tools for use with
+AI assistants like Claude, ChatGPT, and Codex.
+
+Available tools:
+  render_markdown_to_clipboard  Copy rendered markdown to the system clipboard
+  render_mermaid                Render a mermaid diagram to SVG/PNG/JPEG
+
+Examples:
+  mdcopy mcp                          Start with stdio transport (default)
+  mdcopy mcp --transport http          Start HTTP server on 127.0.0.1:3100
+  mdcopy mcp --transport http --listen 0.0.0.0:8080"
+    )]
     Mcp {
+        /// Print help
+        #[arg(short = 'h', long, action = clap::ArgAction::SetTrue)]
+        help: bool,
+
         /// Transport protocol for client communication
-        ///
-        /// stdio: communicates over stdin/stdout (default, used by most MCP clients)
-        /// http:  starts a Streamable HTTP server (for remote or multi-client access)
-        #[arg(long, default_value = "stdio", value_parser = ["stdio", "http"])]
+        #[arg(long, default_value = "stdio", value_parser = ["stdio", "http"],
+            long_help = "\
+Transport protocol for client communication
+
+  stdio  Communicates over stdin/stdout (default, used by most MCP clients)
+  http   Starts a Streamable HTTP server (for remote or multi-client access)"
+        )]
         transport: String,
 
         /// Address and port for the HTTP transport to bind to (ignored for stdio)
@@ -289,7 +301,20 @@ fn main() -> io::Result<()> {
 
     // Dispatch to MCP server if subcommand is present
     #[cfg(feature = "mcp")]
-    if let Some(Command::Mcp { transport, listen }) = args.command {
+    if let Some(Command::Mcp {
+        help,
+        transport,
+        listen,
+    }) = args.command
+    {
+        if help {
+            use clap::CommandFactory;
+            let mut cmd = Args::command();
+            let sub = cmd.find_subcommand_mut("mcp").expect("mcp subcommand");
+            let help_text = sub.render_long_help().to_string();
+            println!("{help_text}");
+            return Ok(());
+        }
         return mcp::run_mcp_server(&transport, &listen);
     }
 
