@@ -11,7 +11,7 @@ use rmcp::{
     service::ElicitationError, tool, tool_handler, tool_router,
 };
 use std::sync::Arc;
-use tools::{RenderMermaidParams, RenderToClipboardParams};
+use tools::{CopyMermaidToClipboardParams, RenderMermaidParams, RenderToClipboardParams};
 
 /// MCP server wrapping mdcopy's rendering capabilities.
 #[derive(Clone)]
@@ -242,6 +242,84 @@ impl MdcopyMcpServer {
             output_path.display()
         ))]))
     }
+
+    #[tool(
+        description = "Render a mermaid diagram and copy it to the system clipboard as an image. The clipboard will contain a PNG image that can be pasted into any application. Accepts mermaid source as text or a file path."
+    )]
+    async fn copy_mermaid_to_clipboard(
+        &self,
+        Parameters(params): Parameters<CopyMermaidToClipboardParams>,
+    ) -> Result<CallToolResult, McpError> {
+        // Validate mutual exclusivity of source/source_file
+        if params.source.is_some() && params.source_file.is_some() {
+            return Err(McpError::invalid_params(
+                "source and source_file are mutually exclusive",
+                None,
+            ));
+        }
+
+        // Resolve mermaid source text
+        let mermaid_source = match (&params.source_file, &params.source) {
+            (Some(path), _) => std::fs::read_to_string(path).map_err(|e| {
+                McpError::internal_error(format!("Failed to read source_file: {}", e), None)
+            })?,
+            (_, Some(text)) => text.clone(),
+            (None, None) => {
+                return Err(McpError::invalid_params(
+                    "Either source or source_file must be provided",
+                    None,
+                ));
+            }
+        };
+
+        let config = self.config.clone();
+        let render_ctx = self.render_ctx.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            let mermaid_config = MermaidConfig {
+                embed: true,
+                format: MermaidFormat::Png,
+                optimize: params.optimize.unwrap_or(config.mermaid.optimize),
+                max_width: params.max_width.unwrap_or(config.mermaid.max_width),
+                max_height: params.max_height.unwrap_or(config.mermaid.max_height),
+            };
+
+            let image_config = ImageConfig {
+                max_dimension: config.image.max_dimension,
+                quality: params.quality.unwrap_or(config.image.quality),
+                ..Default::default()
+            };
+
+            // Render SVG from mermaid source
+            let svg = mermaid_rs_renderer::render(&mermaid_source)
+                .map_err(|e| std::io::Error::other(format!("Mermaid render failed: {}", e)))?;
+
+            // Rasterize to PNG
+            let fontdb = render_ctx.mermaid_cache.fontdb();
+            let raster = crate::mermaid::rasterize_svg_to_raster(
+                &svg,
+                &mermaid_config,
+                &image_config,
+                fontdb,
+            )
+            .map_err(|e| std::io::Error::other(format!("Rasterization failed: {}", e)))?;
+
+            let data_len = raster.image.data.len();
+
+            // Copy to clipboard as image
+            render::copy_image_to_clipboard(&raster.image.data)?;
+
+            Ok::<_, std::io::Error>(data_len)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("Task join error: {}", e), None))?
+        .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Copied mermaid diagram to clipboard as PNG image ({} bytes)",
+            result
+        ))]))
+    }
 }
 
 /// Try to ask the user via elicitation whether they want to overwrite a file.
@@ -283,7 +361,8 @@ impl ServerHandler for MdcopyMcpServer {
             instructions: Some(
                 "mdcopy renders Markdown to rich HTML and copies it to the system clipboard. \
                  Tools: render_markdown_to_clipboard (copies formatted markdown to system clipboard), \
-                 render_mermaid (renders mermaid diagram to SVG/PNG/JPEG file). \
+                 render_mermaid (renders mermaid diagram to SVG/PNG/JPEG file), \
+                 copy_mermaid_to_clipboard (renders mermaid diagram and copies it to clipboard as a PNG image). \
                  For local files, pass file_path rather than file content to avoid bloating the conversation."
                     .to_string(),
             ),

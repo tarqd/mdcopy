@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 base64 = "0.22.1"
 clap = { version = "4.5.54", features = ["derive"] }
-clipboard-rs = "0.3.1"
+clipboard-rs = { version = "0.3.1", features = ["image"] }
 dirs = "6.0.0"
 env_logger = "0.11.8"
 log = "0.4.29"

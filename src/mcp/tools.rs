@@ -113,6 +113,34 @@ pub struct RenderMermaidParams {
     pub quality: Option<u8>,
 }
 
+/// Parameters for copying a rendered mermaid diagram to the clipboard as an image.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CopyMermaidToClipboardParams {
+    /// Absolute path to a mermaid diagram file. Mutually exclusive with `source`.
+    #[serde(default)]
+    pub source_file: Option<String>,
+
+    /// Raw mermaid diagram text. Mutually exclusive with `source_file`.
+    #[serde(default)]
+    pub source: Option<String>,
+
+    /// Optimize rasterized output (resize/compress). Defaults to config file setting.
+    #[serde(default)]
+    pub optimize: Option<bool>,
+
+    /// Max width in pixels for rasterization. Defaults to config file setting.
+    #[serde(default)]
+    pub max_width: Option<u32>,
+
+    /// Max height in pixels for rasterization. Defaults to config file setting.
+    #[serde(default)]
+    pub max_height: Option<u32>,
+
+    /// Quality for image compression (0-100). Defaults to config file setting.
+    #[serde(default)]
+    pub quality: Option<u8>,
+}
+
 /// Elicitation form for confirming file overwrite.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Confirm overwriting an existing file")]

@@ -5,6 +5,7 @@ use crate::config::{Config, ImageConfig, MermaidConfig};
 use crate::highlight::HighlightContext;
 use crate::image::ImageCache;
 use crate::mermaid::MermaidCache;
+use clipboard_rs::common::{RustImage, RustImageData};
 use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
 use log::{debug, info};
 use markdown::mdast::Node;
@@ -120,6 +121,25 @@ pub fn copy_to_clipboard(html: &str, plain_text: &str) -> Result<(), io::Error> 
         .map_err(|e| io::Error::other(format!("Failed to set clipboard content: {}", e)))?;
 
     info!("Copied to clipboard (HTML)");
+    Ok(())
+}
+
+/// Copy PNG image bytes to the system clipboard.
+pub fn copy_image_to_clipboard(png_bytes: &[u8]) -> Result<(), io::Error> {
+    debug!("Writing image to clipboard");
+    let clipboard = ClipboardContext::new()
+        .map_err(|e| io::Error::other(format!("Failed to create clipboard context: {}", e)))?;
+
+    let image_data = RustImageData::from_bytes(png_bytes)
+        .map_err(|e| io::Error::other(format!("Failed to create image data: {}", e)))?;
+
+    let contents = vec![ClipboardContent::Image(image_data)];
+
+    clipboard
+        .set(contents)
+        .map_err(|e| io::Error::other(format!("Failed to set clipboard content: {}", e)))?;
+
+    info!("Copied image to clipboard");
     Ok(())
 }
 
